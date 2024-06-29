@@ -60,6 +60,8 @@ exports
 
 # cache
 cache
+mem-cache
+test-cache
 
 # generated
 generated
