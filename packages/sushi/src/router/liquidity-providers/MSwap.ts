@@ -3,21 +3,22 @@ import { ChainId } from '../../chain/index.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 import { UniswapV2BaseProvider } from './UniswapV2Base.js'
 
-export class QuickSwapProvider extends UniswapV2BaseProvider {
+export class MSwapProvider extends UniswapV2BaseProvider {
+  override fee = 0.003
   constructor(chainId: ChainId, web3Client: PublicClient) {
     const factory = {
-      [ChainId.POLYGON]: '0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32',
+      [ChainId.MATCHAIN]: '0x338bCC4efd3cA000D123d7352b362Fc6D5B3D829',
     } as const
     const initCodeHash = {
-      [ChainId.POLYGON]:
-        '0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f',
+      [ChainId.MATCHAIN]:
+        '0x32c26bd70ba438539c5a5bf79114c634822021bef9c0ea35fe1d9842a36bd662',
     } as const
     super(chainId, web3Client, factory, initCodeHash)
   }
   getType(): LiquidityProviders {
-    return LiquidityProviders.QuickSwap
+    return LiquidityProviders.MSwap
   }
   getPoolProviderName(): string {
-    return 'QuickSwap'
+    return 'MSwap'
   }
 }

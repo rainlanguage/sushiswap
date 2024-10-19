@@ -1,6 +1,7 @@
 import { PublicClient } from 'viem'
 import { ChainId, chainShortName } from '../../chain/index.js'
 import type { Token } from '../../currency/index.js'
+import { DataFetcherOptions } from '../data-fetcher.js'
 import type { PoolCode } from '../pool-codes/index.js'
 
 export enum LiquidityProviders {
@@ -9,15 +10,17 @@ export enum LiquidityProviders {
   UniswapV2 = 'UniswapV2',
   UniswapV3 = 'UniswapV3',
   Trident = 'Trident',
-  QuickSwap = 'QuickSwap',
+  QuickSwapV2 = 'QuickSwapV2',
+  QuickSwapV3 = 'QuickSwapV3',
   ApeSwap = 'ApeSwap',
-  PancakeSwap = 'PancakeSwap',
+  PancakeSwapV2 = 'PancakeSwapV2',
   PancakeSwapV3 = 'PancakeSwapV3',
   TraderJoe = 'TraderJoe',
   Dfyn = 'Dfyn',
   Elk = 'Elk',
   JetSwap = 'JetSwap',
-  SpookySwap = 'SpookySwap',
+  SpookySwapV2 = 'SpookySwapV2',
+  SpookySwapV3 = 'SpookySwapV3',
   NetSwap = 'NetSwap',
   NativeWrap = 'NativeWrap',
   HoneySwap = 'HoneySwap',
@@ -37,11 +40,21 @@ export enum LiquidityProviders {
   BlastDEX = 'BlastDEX',
   MonoswapV2 = 'MonoswapV2',
   MonoswapV3 = 'MonoswapV3',
+  MSwap = 'MSwap',
   ThrusterV2 = 'ThrusterV2',
   ThrusterV3 = 'ThrusterV3',
   DyorV2 = 'DyorV2',
   HyperBlast = 'HyperBlast',
+  KinetixV2 = 'KinetixV2',
   KinetixV3 = 'KinetixV3',
+  Camelot = 'Camelot',
+  Enosys = 'Enosys',
+  BlazeSwap = 'BlazeSwap',
+  LynexV1 = 'LynexV1',
+  LynexV2 = 'LynexV2',
+  SparkDexV2 = 'SparkDexV2',
+  SparkDexV3 = 'SparkDexV3',
+  SparkDexV3_1 = 'SparkDexV3_1',
 }
 
 export abstract class LiquidityProvider {
@@ -79,6 +92,7 @@ export abstract class LiquidityProvider {
     t0: Token,
     t1: Token,
     excludePools?: Set<string>,
+    options?: DataFetcherOptions,
   ): Promise<void>
 
   /**
@@ -116,3 +130,55 @@ export abstract class LiquidityProvider {
       .sort((first, second) => (first > second ? -1 : 1))
       .join(':')
 }
+
+export const UniV2LiquidityProviders: LiquidityProviders[] = [
+  LiquidityProviders.SushiSwapV2,
+  LiquidityProviders.UniswapV2,
+  LiquidityProviders.QuickSwapV2,
+  LiquidityProviders.ApeSwap,
+  LiquidityProviders.PancakeSwapV2,
+  LiquidityProviders.TraderJoe,
+  LiquidityProviders.Dfyn,
+  LiquidityProviders.Elk,
+  LiquidityProviders.JetSwap,
+  LiquidityProviders.SpookySwapV2,
+  LiquidityProviders.NetSwap,
+  LiquidityProviders.HoneySwap,
+  LiquidityProviders.UbeSwap,
+  LiquidityProviders.Biswap,
+  LiquidityProviders.LaserSwap,
+  LiquidityProviders.BaseSwap,
+  LiquidityProviders.Solarbeam,
+  LiquidityProviders.Swapsicle,
+  LiquidityProviders.VVSStandard,
+  LiquidityProviders.Fraxswap,
+  LiquidityProviders.SwapBlast,
+  LiquidityProviders.BlastDEX,
+  LiquidityProviders.MonoswapV2,
+  LiquidityProviders.ThrusterV2,
+  LiquidityProviders.DyorV2,
+  LiquidityProviders.HyperBlast,
+  LiquidityProviders.KinetixV2,
+  LiquidityProviders.Camelot,
+  LiquidityProviders.Enosys,
+  LiquidityProviders.BlazeSwap,
+  LiquidityProviders.LynexV1,
+  LiquidityProviders.SparkDexV2,
+  LiquidityProviders.MSwap,
+]
+
+export const UniV3LiquidityProviders: LiquidityProviders[] = [
+  LiquidityProviders.SushiSwapV3,
+  LiquidityProviders.UniswapV3,
+  LiquidityProviders.QuickSwapV3,
+  LiquidityProviders.DovishV3,
+  LiquidityProviders.KinetixV3,
+  LiquidityProviders.MonoswapV3,
+  LiquidityProviders.ThrusterV3,
+  LiquidityProviders.SpookySwapV3,
+  LiquidityProviders.PancakeSwapV3,
+  LiquidityProviders.Wagmi,
+  LiquidityProviders.LynexV2,
+  LiquidityProviders.SparkDexV3,
+  LiquidityProviders.SparkDexV3_1,
+]

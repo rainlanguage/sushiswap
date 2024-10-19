@@ -3,31 +3,75 @@ import { ChainId, TestnetChainId } from '../chain/index.js'
 import { publicClientConfig } from '../config/index.js'
 import { Type } from '../currency/index.js'
 import { ApeSwapProvider } from './liquidity-providers/ApeSwap.js'
+import { BaseSwapProvider } from './liquidity-providers/BaseSwap.js'
 import { BiswapProvider } from './liquidity-providers/Biswap.js'
+import { BlastDEXProvider } from './liquidity-providers/BlastDEX.js'
+import { BlazeSwapProvider } from './liquidity-providers/BlazeSwap.js'
+import { CamelotProvider } from './liquidity-providers/Camelot.js'
 import { CurveProvider } from './liquidity-providers/CurveProvider.js'
 import { DfynProvider } from './liquidity-providers/Dfyn.js'
 import { DovishV3Provider } from './liquidity-providers/DovishV3.js'
+import { DyorV2Provider } from './liquidity-providers/DyorV2.js'
 import { ElkProvider } from './liquidity-providers/Elk.js'
+import { EnosysProvider } from './liquidity-providers/Enosys.js'
 import { HoneySwapProvider } from './liquidity-providers/HoneySwap.js'
+import { HyperBlastProvider } from './liquidity-providers/HyperBlast.js'
 import { JetSwapProvider } from './liquidity-providers/JetSwap.js'
+import { KinetixV2Provider } from './liquidity-providers/KinetixV2.js'
+import { KinetixV3Provider } from './liquidity-providers/KinetixV3.js'
 import { LaserSwapV2Provider } from './liquidity-providers/LaserSwap.js'
 import {
   LiquidityProvider,
   LiquidityProviders,
 } from './liquidity-providers/LiquidityProvider.js'
+import { LynexV1Provider } from './liquidity-providers/LynexV1.js'
+import { LynexV2Provider } from './liquidity-providers/LynexV2.js'
+import { MSwapProvider } from './liquidity-providers/MSwap.js'
+import { MonoswapV2Provider } from './liquidity-providers/MonoSwapV2.js'
+import { MonoswapV3Provider } from './liquidity-providers/MonoSwapV3.js'
 import { NativeWrapProvider } from './liquidity-providers/NativeWrapProvider.js'
 import { NetSwapProvider } from './liquidity-providers/NetSwap.js'
-import { PancakeSwapProvider } from './liquidity-providers/PancakeSwap.js'
-import { QuickSwapProvider } from './liquidity-providers/QuickSwap.js'
-import { SpookySwapProvider } from './liquidity-providers/SpookySwap.js'
+import { PancakeSwapV2Provider } from './liquidity-providers/PancakeSwapV2.js'
+import { PancakeSwapV3Provider } from './liquidity-providers/PancakeSwapV3.js'
+import { QuickSwapV2Provider } from './liquidity-providers/QuickSwapV2.js'
+import { QuickSwapV3Provider } from './liquidity-providers/QuickswapV3.js'
+import { SolarbeamProvider } from './liquidity-providers/Solarbeam.js'
+import { SparkDexV2Provider } from './liquidity-providers/SparkDexV2.js'
+import { SparkDexV3Provider } from './liquidity-providers/SparkDexV3.js'
+import { SparkDexV3_1Provider } from './liquidity-providers/SparkDexV3_1.js'
+import { SpookySwapV2Provider } from './liquidity-providers/SpookySwapV2.js'
+import { SpookySwapV3Provider } from './liquidity-providers/SpookySwapV3.js'
 import { SushiSwapV2Provider } from './liquidity-providers/SushiSwapV2.js'
 import { SushiSwapV3Provider } from './liquidity-providers/SushiSwapV3.js'
+import { SwapBlastProvider } from './liquidity-providers/SwapBlast.js'
+import {
+  ThrusterV2_1Provider,
+  ThrusterV2_3Provider,
+} from './liquidity-providers/ThrusterV2.js'
+import { ThrusterV3Provider } from './liquidity-providers/ThrusterV3.js'
 import { TraderJoeProvider } from './liquidity-providers/TraderJoe.js'
 import { TridentProvider } from './liquidity-providers/Trident.js'
 import { UbeSwapProvider } from './liquidity-providers/UbeSwap.js'
 import { UniswapV2Provider } from './liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from './liquidity-providers/UniswapV3.js'
+import { VVSStandardProvider } from './liquidity-providers/VVSStandard.js'
+import { WagmiProvider } from './liquidity-providers/Wagmi.js'
 import type { PoolCode } from './pool-codes/index.js'
+import { promiseTimeout } from './timeout.js'
+
+// options for data fetching, such as pinning block number and memoize
+export type DataFetcherOptions = {
+  /**
+   * The pinned block number when getting onchain data
+   * this option is usefull for reproducing the route,
+   * price, etc of a certain block
+   */
+  blockNumber?: bigint
+  /** Determines if memoizer should be used or not */
+  memoize?: boolean
+  /** Determines a timeout (in ms) for fetching pools for a token pair */
+  fetchPoolsTimeout?: number
+}
 
 // TODO: Should be a mode on the config for DataFetcher
 const isTest =
@@ -111,25 +155,52 @@ export class DataFetcher {
     this.providers = [new NativeWrapProvider(this.chainId, this.web3Client)]
     ;[
       ApeSwapProvider,
+      BaseSwapProvider,
       BiswapProvider,
+      BlastDEXProvider,
+      BlazeSwapProvider,
+      CamelotProvider,
       CurveProvider,
       DfynProvider,
       DovishV3Provider,
+      DyorV2Provider,
       ElkProvider,
+      EnosysProvider,
       HoneySwapProvider,
+      HyperBlastProvider,
       JetSwapProvider,
+      KinetixV2Provider,
+      KinetixV3Provider,
       LaserSwapV2Provider,
+      LynexV1Provider,
+      LynexV2Provider,
+      MonoswapV2Provider,
+      MonoswapV3Provider,
+      MSwapProvider,
       NetSwapProvider,
-      PancakeSwapProvider,
-      SpookySwapProvider,
+      PancakeSwapV2Provider,
+      PancakeSwapV3Provider,
+      QuickSwapV2Provider,
+      QuickSwapV3Provider,
+      SolarbeamProvider,
+      SparkDexV2Provider,
+      SparkDexV3Provider,
+      SparkDexV3_1Provider,
+      SpookySwapV2Provider,
+      SpookySwapV3Provider,
       SushiSwapV2Provider,
       SushiSwapV3Provider,
+      SwapBlastProvider,
+      ThrusterV2_1Provider,
+      ThrusterV2_3Provider,
+      ThrusterV3Provider,
       TraderJoeProvider,
-      QuickSwapProvider,
       TridentProvider,
       UbeSwapProvider,
       UniswapV2Provider,
       UniswapV3Provider,
+      VVSStandardProvider,
+      WagmiProvider,
     ].forEach((p) => {
       try {
         const provider = new p(this.chainId, this.web3Client)
@@ -169,6 +240,7 @@ export class DataFetcher {
     currency0: Type,
     currency1: Type,
     excludePools?: Set<string>,
+    options?: DataFetcherOptions,
   ): Promise<void> {
     // console.log('PROVIDER COUNT', this.providers.length)
     // ensure that we only fetch the native wrap pools if the token is the native currency and wrapped native currency
@@ -177,11 +249,26 @@ export class DataFetcher {
         (p) => p.getType() === LiquidityProviders.NativeWrap,
       )
       if (provider) {
-        await provider.fetchPoolsForToken(
-          currency0.wrapped,
-          currency1.wrapped,
-          excludePools,
-        )
+        try {
+          options?.fetchPoolsTimeout
+            ? await promiseTimeout(
+                provider.fetchPoolsForToken(
+                  currency0.wrapped,
+                  currency1.wrapped,
+                  excludePools,
+                  options,
+                ),
+                options.fetchPoolsTimeout,
+              )
+            : await provider.fetchPoolsForToken(
+                currency0.wrapped,
+                currency1.wrapped,
+                excludePools,
+                options,
+              )
+        } catch {
+          /**/
+        }
       }
     } else {
       const [token0, token1] =
@@ -189,11 +276,24 @@ export class DataFetcher {
         currency0.wrapped.sortsBefore(currency1.wrapped)
           ? [currency0.wrapped, currency1.wrapped]
           : [currency1.wrapped, currency0.wrapped]
-      await Promise.all(
-        this.providers.map((p) =>
-          p.fetchPoolsForToken(token0, token1, excludePools),
-        ),
-      )
+      try {
+        options?.fetchPoolsTimeout
+          ? await promiseTimeout(
+              Promise.allSettled(
+                this.providers.map((p) =>
+                  p.fetchPoolsForToken(token0, token1, excludePools, options),
+                ),
+              ),
+              options.fetchPoolsTimeout,
+            )
+          : await Promise.allSettled(
+              this.providers.map((p) =>
+                p.fetchPoolsForToken(token0, token1, excludePools, options),
+              ),
+            )
+      } catch {
+        /**/
+      }
     }
   }
 

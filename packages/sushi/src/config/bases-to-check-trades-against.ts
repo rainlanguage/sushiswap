@@ -1,5 +1,12 @@
 import { ChainId } from '../chain/index.js'
-import { MUSD, Token, USDB } from '../currency/index.js'
+import {
+  ENOSYS_EETH,
+  ENOSYS_USDT,
+  ENOSYS_WETH,
+  MUSD,
+  Token,
+  USDB,
+} from '../currency/index.js'
 import {
   AAVE,
   BUSD,
@@ -479,4 +486,19 @@ export const BASES_TO_CHECK_TRADES_AGAINST: {
     USDC[ChainId.CRONOS],
   ],
   [ChainId.BLAST]: [WNATIVE[ChainId.BLAST], USDB[ChainId.BLAST], MUSD],
+  [ChainId.FLARE]: [
+    WNATIVE[ChainId.FLARE],
+    WETH9[ChainId.FLARE],
+    USDT[ChainId.FLARE],
+    USDC[ChainId.FLARE],
+    ENOSYS_USDT,
+    ENOSYS_EETH,
+    ENOSYS_WETH,
+  ],
+  [ChainId.MATCHAIN]: [
+    WNATIVE[ChainId.MATCHAIN],
+    WETH9[ChainId.MATCHAIN],
+    USDT[ChainId.MATCHAIN],
+    USDC[ChainId.MATCHAIN],
+  ],
 }

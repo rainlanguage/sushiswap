@@ -1,7 +1,7 @@
 import { getCreate2Address } from '@ethersproject/address'
 import { add, getUnixTime } from 'date-fns'
 import { Address, Hex, PublicClient, encodePacked, keccak256 } from 'viem'
-import { getReservesAbi } from '../../abi/index.js'
+import { getReservesAbi as abi } from '../../abi/index.js'
 import { ChainId } from '../../chain/index.js'
 import {
   ADDITIONAL_BASES,
@@ -9,6 +9,7 @@ import {
 } from '../../config/index.js'
 import { Token } from '../../currency/index.js'
 import { ConstantProductRPool, RToken } from '../../tines/index.js'
+import { DataFetcherOptions } from '../data-fetcher.js'
 import { getCurrencyCombinations } from '../get-currency-combinations.js'
 import {
   PoolResponse2,
@@ -16,6 +17,7 @@ import {
   filterTopPools,
   mapToken,
 } from '../lib/api.js'
+import { memoizer } from '../memoizer.js'
 import { ConstantProductPoolCode, type PoolCode } from '../pool-codes/index.js'
 import { LiquidityProvider } from './LiquidityProvider.js'
 
@@ -24,7 +26,7 @@ interface PoolInfo {
   validUntilTimestamp: number
 }
 
-interface StaticPool {
+export interface StaticPool {
   address: Address
   token0: Token
   token1: Token
@@ -57,6 +59,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
   refreshAvailablePoolsTimestamp = getUnixTime(
     add(Date.now(), { seconds: this.FETCH_AVAILABLE_POOLS_AFTER_SECONDS }),
   )
+  getReservesAbi: any = abi
 
   constructor(
     chainId: ChainId,
@@ -105,7 +108,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
             ({
               address: pool.address as Address,
               chainId: this.chainId,
-              abi: getReservesAbi,
+              abi,
               functionName: 'getReserves',
             }) as const,
         ),
@@ -160,6 +163,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
     t0: Token,
     t1: Token,
     excludePools?: Set<string>,
+    options?: DataFetcherOptions,
   ): Promise<void> {
     const topPoolAddresses = Array.from(this.topPools.keys())
     let pools =
@@ -203,7 +207,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
           pool.address,
           token0,
           token1,
-          this.fee,
+          'fee' in pool ? pool.fee : this.fee,
           0n,
           0n,
         )
@@ -219,29 +223,40 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
       }
     })
 
-    const reserves = await this.client
-      .multicall({
-        multicallAddress: this.client.chain?.contracts?.multicall3
-          ?.address as Address,
-        allowFailure: true,
-        contracts: poolCodesToCreate.map(
-          (poolCode) =>
-            ({
-              address: poolCode.pool.address as Address,
-              chainId: this.chainId,
-              abi: getReservesAbi,
-              functionName: 'getReserves',
-            }) as const,
-        ),
-      })
-      .catch((e) => {
-        console.warn(
-          `${this.getLogPrefix()} - UPDATE: on-demand pools multicall failed, message: ${
-            e.message
-          }`,
-        )
-        return undefined
-      })
+    const multicallMemoize = await memoizer.fn(this.client.multicall)
+
+    const multicallData = {
+      multicallAddress: this.client.chain?.contracts?.multicall3
+        ?.address as Address,
+      allowFailure: true,
+      blockNumber: options?.blockNumber,
+      contracts: poolCodesToCreate.map(
+        (poolCode) =>
+          ({
+            address: poolCode.pool.address as Address,
+            chainId: this.chainId,
+            abi: this.getReservesAbi,
+            functionName: 'getReserves',
+          }) as const,
+      ),
+    }
+    const reserves = options?.memoize
+      ? await (multicallMemoize(multicallData) as Promise<any>).catch((e) => {
+          console.warn(
+            `${this.getLogPrefix()} - UPDATE: on-demand pools multicall failed, message: ${
+              e.message
+            }`,
+          )
+          return undefined
+        })
+      : await this.client.multicall(multicallData).catch((e) => {
+          console.warn(
+            `${this.getLogPrefix()} - UPDATE: on-demand pools multicall failed, message: ${
+              e.message
+            }`,
+          )
+          return undefined
+        })
 
     poolCodesToCreate.forEach((poolCode, i) => {
       const pool = poolCode.pool
@@ -293,7 +308,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
                 ({
                   address: poolCode.pool.address as Address,
                   chainId: this.chainId,
-                  abi: getReservesAbi,
+                  abi,
                   functionName: 'getReserves',
                 }) as const,
             ),
@@ -316,7 +331,7 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
                 ({
                   address: poolCode.pool.address as Address,
                   chainId: this.chainId,
-                  abi: getReservesAbi,
+                  abi,
                   functionName: 'getReserves',
                 }) as const,
             ),
@@ -499,23 +514,23 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
   startFetchPoolsData() {
     this.stopFetchPoolsData()
     this.topPools = new Map()
-    this.unwatchBlockNumber = this.client.watchBlockNumber({
-      onBlockNumber: (blockNumber) => {
-        this.lastUpdateBlock = Number(blockNumber)
-        if (!this.isInitialized) {
-          this.initialize()
-        } else {
-          this.updatePools()
-        }
-      },
-      onError: (error) => {
-        console.error(
-          `${this.getLogPrefix()} - Error watching block number: ${
-            error.message
-          }`,
-        )
-      },
-    })
+    // this.unwatchBlockNumber = this.client.watchBlockNumber({
+    //   onBlockNumber: (blockNumber) => {
+    //     this.lastUpdateBlock = Number(blockNumber)
+    //     if (!this.isInitialized) {
+    //       this.initialize()
+    //     } else {
+    //       this.updatePools()
+    //     }
+    //   },
+    //   onError: (error) => {
+    //     console.error(
+    //       `${this.getLogPrefix()} - Error watching block number: ${
+    //         error.message
+    //       }`,
+    //     )
+    //   },
+    // })
   }
 
   private removeStalePools() {
@@ -536,8 +551,9 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
     t0: Token,
     t1: Token,
     excludePools?: Set<string>,
+    options?: DataFetcherOptions,
   ): Promise<void> {
-    await this.getOnDemandPools(t0, t1, excludePools)
+    await this.getOnDemandPools(t0, t1, excludePools, options)
   }
 
   /**

@@ -1,45 +1,54 @@
 import { Address, PublicClient } from 'viem'
-import { erc20Abi, tickLensAbi } from '../../abi/index.js'
+import { erc20Abi, tickLensAbi, uniswapV3FactoryAbi } from '../../abi/index.js'
 import { ChainId } from '../../chain/index.js'
 import { SushiSwapV3FeeAmount, TICK_SPACINGS } from '../../config/index.js'
 import { Currency, Token, Type } from '../../currency/index.js'
 import { computeSushiSwapV3PoolAddress } from '../../pool/index.js'
 import { RToken, UniV3Pool } from '../../tines/index.js'
+import { DataFetcherOptions } from '../data-fetcher.js'
 import { getCurrencyCombinations } from '../get-currency-combinations.js'
+import { memoizer } from '../memoizer.js'
 import { type PoolCode, UniV3PoolCode } from '../pool-codes/index.js'
 import { LiquidityProvider } from './LiquidityProvider.js'
 
-interface StaticPool {
-  address: Address
-  token0: Token
-  token1: Token
-  fee: SushiSwapV3FeeAmount
+export interface UniV3FeeType {
+  readonly LOWEST: number
+  readonly LOW: number
+  readonly MEDIUM: number
+  readonly HIGH: number
 }
 
-interface V3Pool {
+export type UniV3TickSpacingType = {
+  readonly [key: UniV3FeeType[keyof UniV3FeeType]]: number
+}
+
+export interface StaticPoolUniV3 {
   address: Address
   token0: Token
   token1: Token
-  fee: SushiSwapV3FeeAmount
+  fee: UniV3FeeType[keyof UniV3FeeType]
+}
+
+export interface V3Pool {
+  address: Address
+  token0: Token
+  token1: Token
+  fee: UniV3FeeType[keyof UniV3FeeType]
   sqrtPriceX96: bigint
   activeTick: number
 }
 
 export const NUMBER_OF_SURROUNDING_TICKS = 1000 // 10% price impact
 
-const getActiveTick = (tickCurrent: number, feeAmount: SushiSwapV3FeeAmount) =>
-  typeof tickCurrent === 'number' && feeAmount
-    ? Math.floor(tickCurrent / TICK_SPACINGS[feeAmount]) *
-      TICK_SPACINGS[feeAmount]
-    : undefined
-
-const bitmapIndex = (tick: number, tickSpacing: number) => {
+export const bitmapIndex = (tick: number, tickSpacing: number) => {
   return Math.floor(tick / tickSpacing / 256)
 }
 
-type PoolFilter = { has: (arg: string) => boolean }
+export type PoolFilter = { has: (arg: string) => boolean }
 
 export abstract class UniswapV3BaseProvider extends LiquidityProvider {
+  TICK_SPACINGS: UniV3TickSpacingType = TICK_SPACINGS
+  FEE: UniV3FeeType = SushiSwapV3FeeAmount
   poolsByTrade: Map<string, string[]> = new Map()
   pools: Map<string, PoolCode> = new Map()
 
@@ -74,74 +83,95 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
     }
   }
 
-  async fetchPoolsForToken(
+  getActiveTick = (
+    tickCurrent: number,
+    feeAmount: UniV3FeeType[keyof UniV3FeeType],
+  ) =>
+    typeof tickCurrent === 'number' && feeAmount
+      ? Math.floor(tickCurrent / this.TICK_SPACINGS[feeAmount]!) *
+        this.TICK_SPACINGS[feeAmount]!
+      : undefined
+
+  async fetchPoolData(
     t0: Token,
     t1: Token,
     excludePools?: Set<string> | PoolFilter,
-  ): Promise<void> {
+    options?: DataFetcherOptions,
+  ): Promise<V3Pool[]> {
     let staticPools = this.getStaticPools(t0, t1)
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
-    const slot0 = await this.client
-      .multicall({
-        multicallAddress: this.client.chain?.contracts?.multicall3
-          ?.address as Address,
-        allowFailure: true,
-        contracts: staticPools.map(
-          (pool) =>
-            ({
-              address: pool.address as Address,
-              chainId: this.chainId,
-              abi: [
-                {
-                  inputs: [],
-                  name: 'slot0',
-                  outputs: [
-                    {
-                      internalType: 'uint160',
-                      name: 'sqrtPriceX96',
-                      type: 'uint160',
-                    },
-                    { internalType: 'int24', name: 'tick', type: 'int24' },
-                    {
-                      internalType: 'uint16',
-                      name: 'observationIndex',
-                      type: 'uint16',
-                    },
-                    {
-                      internalType: 'uint16',
-                      name: 'observationCardinality',
-                      type: 'uint16',
-                    },
-                    {
-                      internalType: 'uint16',
-                      name: 'observationCardinalityNext',
-                      type: 'uint16',
-                    },
-                    {
-                      internalType: 'uint8',
-                      name: 'feeProtocol',
-                      type: 'uint8',
-                    },
-                    { internalType: 'bool', name: 'unlocked', type: 'bool' },
-                  ],
-                  stateMutability: 'view',
-                  type: 'function',
-                },
-              ],
-              functionName: 'slot0',
-            }) as const,
-        ),
-      })
-      .catch((e) => {
-        console.warn(
-          `${this.getLogPrefix()} - INIT: multicall failed, message: ${
-            e.message
-          }`,
-        )
-        return undefined
-      })
+    const multicallMemoize = await memoizer.fn(this.client.multicall)
+
+    const slot0Data = {
+      multicallAddress: this.client.chain?.contracts?.multicall3
+        ?.address as Address,
+      allowFailure: true,
+      blockNumber: options?.blockNumber,
+      contracts: staticPools.map(
+        (pool) =>
+          ({
+            address: pool.address as Address,
+            chainId: this.chainId,
+            abi: [
+              {
+                inputs: [],
+                name: 'slot0',
+                outputs: [
+                  {
+                    internalType: 'uint160',
+                    name: 'sqrtPriceX96',
+                    type: 'uint160',
+                  },
+                  { internalType: 'int24', name: 'tick', type: 'int24' },
+                  {
+                    internalType: 'uint16',
+                    name: 'observationIndex',
+                    type: 'uint16',
+                  },
+                  {
+                    internalType: 'uint16',
+                    name: 'observationCardinality',
+                    type: 'uint16',
+                  },
+                  {
+                    internalType: 'uint16',
+                    name: 'observationCardinalityNext',
+                    type: 'uint16',
+                  },
+                  {
+                    internalType: 'uint8',
+                    name: 'feeProtocol',
+                    type: 'uint8',
+                  },
+                  { internalType: 'bool', name: 'unlocked', type: 'bool' },
+                ],
+                stateMutability: 'view',
+                type: 'function',
+              },
+            ],
+            functionName: 'slot0',
+          }) as const,
+      ),
+    }
+    const slot0 = options?.memoize
+      ? await (multicallMemoize(slot0Data) as Promise<any>).catch((e) => {
+          console.warn(
+            `${this.getLogPrefix()} - INIT: multicall failed, message: ${
+              e.message
+            }`,
+          )
+          return undefined
+        })
+      : await this.client.multicall(slot0Data).catch((e) => {
+          console.warn(
+            `${this.getLogPrefix()} - INIT: multicall failed, message: ${
+              e.message
+            }`,
+          )
+          return undefined
+        })
 
     const existingPools: V3Pool[] = []
 
@@ -151,7 +181,7 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
       const tick = slot0[i]!.result?.[1]
       if (!sqrtPriceX96 || sqrtPriceX96 === 0n || typeof tick !== 'number')
         return
-      const activeTick = getActiveTick(tick, pool.fee)
+      const activeTick = this.getActiveTick(tick, pool.fee)
       if (typeof activeTick !== 'number') return
       existingPools.push({
         ...pool,
@@ -160,12 +190,30 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
       })
     })
 
+    return existingPools
+  }
+
+  async fetchPoolsForToken(
+    t0: Token,
+    t1: Token,
+    excludePools?: Set<string> | PoolFilter,
+    options?: DataFetcherOptions,
+  ): Promise<void> {
+    const existingPools = await this.fetchPoolData(
+      t0,
+      t1,
+      excludePools,
+      options,
+    )
     if (existingPools.length === 0) return
 
-    const liquidityContracts = this.client.multicall({
+    const multicallMemoize = await memoizer.fn(this.client.multicall)
+
+    const liquidityContractsData = {
       multicallAddress: this.client.chain?.contracts?.multicall3
         ?.address as Address,
       allowFailure: true,
+      blockNumber: options?.blockNumber,
       contracts: existingPools.map(
         (pool) =>
           ({
@@ -185,12 +233,29 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
             functionName: 'liquidity',
           }) as const,
       ),
-    })
+    }
+    const liquidityContracts: Promise<
+      (
+        | {
+            error?: undefined
+            result: bigint
+            status: 'success'
+          }
+        | {
+            error: Error
+            result?: undefined
+            status: 'failure'
+          }
+      )[]
+    > = options?.memoize
+      ? (multicallMemoize(liquidityContractsData) as Promise<any>)
+      : this.client.multicall(liquidityContractsData)
 
-    const token0Contracts = this.client.multicall({
+    const token0ContractsData = {
       multicallAddress: this.client.chain?.contracts?.multicall3
         ?.address as Address,
       allowFailure: true,
+      blockNumber: options?.blockNumber,
       contracts: existingPools.map(
         (pool) =>
           ({
@@ -201,12 +266,29 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
             functionName: 'balanceOf',
           }) as const,
       ),
-    })
+    }
+    const token0Contracts: Promise<
+      (
+        | {
+            error: Error
+            result?: undefined
+            status: 'failure'
+          }
+        | {
+            error?: undefined
+            result: bigint
+            status: 'success'
+          }
+      )[]
+    > = options?.memoize
+      ? (multicallMemoize(token0ContractsData) as Promise<any>)
+      : this.client.multicall(token0ContractsData)
 
-    const token1Contracts = this.client.multicall({
+    const token1ContractsData = {
       multicallAddress: this.client.chain?.contracts?.multicall3
         ?.address as Address,
       allowFailure: true,
+      blockNumber: options?.blockNumber,
       contracts: existingPools.map(
         (pool) =>
           ({
@@ -217,18 +299,34 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
             functionName: 'balanceOf',
           }) as const,
       ),
-    })
+    }
+    const token1Contracts: Promise<
+      (
+        | {
+            error?: undefined
+            result: bigint
+            status: 'success'
+          }
+        | {
+            error: Error
+            result?: undefined
+            status: 'failure'
+          }
+      )[]
+    > = options?.memoize
+      ? (multicallMemoize(token1ContractsData) as Promise<any>)
+      : this.client.multicall(token1ContractsData)
 
     const minIndexes = existingPools.map((pool) =>
       bitmapIndex(
         pool.activeTick - NUMBER_OF_SURROUNDING_TICKS,
-        TICK_SPACINGS[pool.fee],
+        this.TICK_SPACINGS[pool.fee]!,
       ),
     )
     const maxIndexes = existingPools.map((pool) =>
       bitmapIndex(
         pool.activeTick + NUMBER_OF_SURROUNDING_TICKS,
-        TICK_SPACINGS[pool.fee],
+        this.TICK_SPACINGS[pool.fee]!,
       ),
     )
 
@@ -242,6 +340,7 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
       ).flatMap((j) => ({
         chainId: this.chainId,
         address: this.tickLens[
+          // @ts-ignore
           this.chainId as keyof typeof this.tickLens
         ] as Address,
         args: [pool.address, j] as const,
@@ -251,12 +350,33 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
       }))
     })
 
-    const ticksContracts = this.client.multicall({
+    const ticksContractsData = {
       multicallAddress: this.client.chain?.contracts?.multicall3
         ?.address as Address,
       allowFailure: true,
       contracts: wordList,
-    })
+      blockNumber: options?.blockNumber,
+    }
+    const ticksContracts: Promise<
+      (
+        | {
+            error?: undefined
+            result: readonly {
+              tick: number
+              liquidityNet: bigint
+              liquidityGross: bigint
+            }[]
+            status: 'success'
+          }
+        | {
+            error: Error
+            result?: undefined
+            status: 'failure'
+          }
+      )[]
+    > = options?.memoize
+      ? (multicallMemoize(ticksContractsData) as Promise<any>)
+      : this.client.multicall(ticksContractsData)
 
     const [liquidityResults, token0Balances, token1Balances, tickResults] =
       await Promise.all([
@@ -296,7 +416,8 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
       })).sort((a, b) => a.index - b.index)
 
       const lowerUnknownTick =
-        minIndexes[i]! * TICK_SPACINGS[pool.fee] * 256 - TICK_SPACINGS[pool.fee]
+        minIndexes[i]! * this.TICK_SPACINGS[pool.fee]! * 256 -
+        this.TICK_SPACINGS[pool.fee]!
       console.assert(
         poolTicks.length === 0 || lowerUnknownTick < poolTicks[0]!.index,
         'Error 236: unexpected min tick index',
@@ -306,7 +427,7 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
         DLiquidity: 0n,
       })
       const upperUnknownTick =
-        (maxIndexes[i]! + 1) * TICK_SPACINGS[pool.fee] * 256
+        (maxIndexes[i]! + 1) * this.TICK_SPACINGS[pool.fee]! * 256
       console.assert(
         poolTicks[poolTicks.length - 1]!.index < upperUnknownTick,
         'Error 244: unexpected max tick index',
@@ -345,28 +466,26 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
     )
   }
 
-  getStaticPools(t1: Token, t2: Token): StaticPool[] {
+  getStaticPools(t1: Token, t2: Token): StaticPoolUniV3[] {
     const currencyCombinations = getCurrencyCombinations(this.chainId, t1, t2)
 
-    const allCurrencyCombinationsWithAllFees: [
-      Type,
-      Type,
-      SushiSwapV3FeeAmount,
-    ][] = currencyCombinations.reduce<
-      [Currency, Currency, SushiSwapV3FeeAmount][]
-    >((list, [tokenA, tokenB]) => {
-      if (tokenA !== undefined && tokenB !== undefined) {
-        return list.concat([
-          [tokenA, tokenB, SushiSwapV3FeeAmount.LOWEST],
-          [tokenA, tokenB, SushiSwapV3FeeAmount.LOW],
-          [tokenA, tokenB, SushiSwapV3FeeAmount.MEDIUM],
-          [tokenA, tokenB, SushiSwapV3FeeAmount.HIGH],
-        ])
-      }
-      return []
-    }, [])
+    const allCurrencyCombinationsWithAllFees: [Type, Type, number][] =
+      currencyCombinations.reduce<[Currency, Currency, number][]>(
+        (list, [tokenA, tokenB]) => {
+          if (tokenA !== undefined && tokenB !== undefined) {
+            return list.concat([
+              [tokenA, tokenB, this.FEE.LOWEST],
+              [tokenA, tokenB, this.FEE.LOW],
+              [tokenA, tokenB, this.FEE.MEDIUM],
+              [tokenA, tokenB, this.FEE.HIGH],
+            ])
+          }
+          return []
+        },
+        [],
+      )
 
-    const filtered: [Token, Token, SushiSwapV3FeeAmount][] = []
+    const filtered: [Token, Token, number][] = []
     allCurrencyCombinationsWithAllFees.forEach(
       ([currencyA, currencyB, feeAmount]) => {
         if (currencyA && currencyB && feeAmount) {
@@ -400,23 +519,23 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
   startFetchPoolsData() {
     this.stopFetchPoolsData()
     // this.topPools = new Map()
-    this.unwatchBlockNumber = this.client.watchBlockNumber({
-      onBlockNumber: (blockNumber) => {
-        this.lastUpdateBlock = Number(blockNumber)
-        // if (!this.isInitialized) {
-        //   this.initialize()
-        // } else {
-        //   this.updatePools()
-        // }
-      },
-      onError: (error) => {
-        console.error(
-          `${this.getLogPrefix()} - Error watching block number: ${
-            error.message
-          }`,
-        )
-      },
-    })
+    // this.unwatchBlockNumber = this.client.watchBlockNumber({
+    //   onBlockNumber: (blockNumber) => {
+    //     this.lastUpdateBlock = Number(blockNumber)
+    //     // if (!this.isInitialized) {
+    //     //   this.initialize()
+    //     // } else {
+    //     //   this.updatePools()
+    //     // }
+    //   },
+    //   onError: (error) => {
+    //     console.error(
+    //       `${this.getLogPrefix()} - Error watching block number: ${
+    //         error.message
+    //       }`,
+    //     )
+    //   },
+    // })
   }
 
   getCurrentPoolList(): PoolCode[] {
@@ -433,5 +552,36 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
   stopFetchPoolsData() {
     if (this.unwatchBlockNumber) this.unwatchBlockNumber()
     this.blockListener = undefined
+  }
+
+  async ensureFeeAndTicks(): Promise<boolean> {
+    const feeList = [
+      this.FEE.LOWEST,
+      this.FEE.LOW,
+      this.FEE.MEDIUM,
+      this.FEE.HIGH,
+    ] as number[]
+    const results = (await this.client.multicall({
+      multicallAddress: this.client.chain?.contracts?.multicall3
+        ?.address as Address,
+      allowFailure: false,
+      contracts: feeList.map(
+        (fee) =>
+          ({
+            chainId: this.chainId,
+            address: this.factory[this.chainId as keyof typeof this.factory]!,
+            abi: uniswapV3FactoryAbi,
+            functionName: 'feeAmountTickSpacing',
+            args: [fee],
+          }) as const,
+      ),
+    })) as number[]
+
+    // fetched fee map to ticks should match correctly with hardcoded literals in the dex
+    // a tick can be 0 if there is no pools deployed with that fee yet
+    return results.every(
+      (v, i) =>
+        this.TICK_SPACINGS[feeList[i] as SushiSwapV3FeeAmount] === v || v === 0,
+    )
   }
 }

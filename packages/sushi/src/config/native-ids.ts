@@ -54,4 +54,6 @@ export const nativeCurrencyIds = {
   [ChainId.ZETACHAIN]: 'ZETA',
   [ChainId.CRONOS]: 'CRO',
   [ChainId.BLAST]: 'ETH',
+  [ChainId.FLARE]: 'FLR',
+  [ChainId.MATCHAIN]: 'BNB',
 } as const
