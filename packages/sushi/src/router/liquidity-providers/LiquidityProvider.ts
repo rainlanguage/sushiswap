@@ -56,6 +56,7 @@ export enum LiquidityProviders {
   SparkDexV3 = 'SparkDexV3',
   SparkDexV3_1 = 'SparkDexV3_1',
   GravityFinance = 'GravityFinance',
+  AerodromeV2 = 'AerodromeV2',
 }
 
 export abstract class LiquidityProvider {
@@ -167,6 +168,7 @@ export const UniV2LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.SparkDexV2,
   LiquidityProviders.MSwap,
   LiquidityProviders.GravityFinance,
+  LiquidityProviders.AerodromeV2, // custom fork
 ]
 
 export const UniV3LiquidityProviders: LiquidityProviders[] = [
