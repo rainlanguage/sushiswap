@@ -127,7 +127,7 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
     pools.forEach((pool, i) => {
       const fee =
         fees[i]?.result !== undefined
-          ? Number(fees[i]?.result)
+          ? Number(fees[i]?.result) / 10_000
           : 'fee' in pool
             ? pool.fee
             : this.fee
