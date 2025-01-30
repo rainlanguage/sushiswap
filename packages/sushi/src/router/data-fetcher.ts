@@ -2,7 +2,7 @@ import { http, PublicClient, createPublicClient } from 'viem'
 import { ChainId, TestnetChainId } from '../chain/index.js'
 import { publicClientConfig } from '../config/index.js'
 import { Type } from '../currency/index.js'
-import { AerodromeV2Provider } from './liquidity-providers/AerodromV2.js'
+import { AerodromeV2Provider } from './liquidity-providers/AerodromeV2.js'
 import { ApeSwapProvider } from './liquidity-providers/ApeSwap.js'
 import { BaseSwapProvider } from './liquidity-providers/BaseSwap.js'
 import { BiswapProvider } from './liquidity-providers/Biswap.js'
@@ -57,6 +57,7 @@ import { UbeSwapProvider } from './liquidity-providers/UbeSwap.js'
 import { UniswapV2Provider } from './liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from './liquidity-providers/UniswapV3.js'
 import { VVSStandardProvider } from './liquidity-providers/VVSStandard.js'
+import { VelodromeV2Provider } from './liquidity-providers/VelodromeV2.js'
 import { WagmiProvider } from './liquidity-providers/Wagmi.js'
 import type { PoolCode } from './pool-codes/index.js'
 import { promiseTimeout } from './timeout.js'
@@ -203,6 +204,7 @@ export class DataFetcher {
       UbeSwapProvider,
       UniswapV2Provider,
       UniswapV3Provider,
+      VelodromeV2Provider,
       VVSStandardProvider,
       WagmiProvider,
     ].forEach((p) => {
