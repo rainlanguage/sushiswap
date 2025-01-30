@@ -186,7 +186,7 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
       ),
       token0: t0,
       token1: t1,
-      fee: this.stableFee,
+      fee: stable ? this.stableFee : this.volatileFee,
       stable,
     }))
   }
