@@ -119,12 +119,18 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
       add(Date.now(), { seconds: this.ON_DEMAND_POOLS_LIFETIME_IN_SECONDS }),
     )
 
+    // fetch pool fees
     const fees = await this.getPoolFee(pools, options)
     if (!fees) return
 
     const poolCodesToCreate: PoolCode[] = []
     pools.forEach((pool, i) => {
-      const fee = fees[i]?.result
+      const fee =
+        fees[i]?.result !== undefined
+          ? Number(fees[i]?.result)
+          : 'fee' in pool
+            ? pool.fee
+            : this.fee
       const existingPool = this.onDemandPools.get(pool.address)
       if (existingPool === undefined) {
         const token0 = pool.token0 as RToken
@@ -134,7 +140,7 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
           pool.address,
           token0,
           token1,
-          fee ?? 'fee' in pool ? pool.fee : this.fee,
+          fee,
           0n,
           0n,
         )
@@ -158,41 +164,31 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
   }
 
   override getStaticPools(t1: Token, t2: Token): VelodromeV2Pool[] {
-    const currencyCombination = getCurrencyCombinations(
-      this.chainId,
-      t1,
-      t2,
-    ).map(([c0, c1]) => (c0.sortsBefore(c1) ? [c0, c1] : [c1, c0]))
-    return currencyCombination.flatMap((combination) => [
-      {
-        address: computeVelodromeV2PoolAddress(
-          this.factory[this.chainId as keyof typeof this.factory]!,
-          this.poolImplementation[
-            this.chainId as keyof typeof this.poolImplementation
-          ]!,
-          combination[0]!,
-          combination[1]!,
-          true,
-        ),
-        token0: combination[0]!,
-        token1: combination[1]!,
-        fee: this.stableFee,
-        stable: true,
-      },
-      {
-        address: computeVelodromeV2PoolAddress(
-          this.factory[this.chainId]!,
-          this.poolImplementation[this.chainId]!,
-          combination[0]!,
-          combination[1]!,
-          false,
-        ),
-        token0: combination[0]!,
-        token1: combination[1]!,
-        fee: this.volatileFee,
-        stable: false,
-      },
-    ])
+    const currencyCombination: [Token, Token, boolean][] =
+      getCurrencyCombinations(this.chainId, t1, t2).flatMap(([c0, c1]) =>
+        c0.sortsBefore(c1)
+          ? [
+              [c0, c1, true],
+              [c0, c1, false],
+            ]
+          : [
+              [c1, c0, true],
+              [c1, c0, false],
+            ],
+      )
+    return currencyCombination.map(([t0, t1, stable]) => ({
+      address: computeVelodromeV2PoolAddress(
+        this.factory[this.chainId]!,
+        this.poolImplementation[this.chainId]!,
+        t0,
+        t1,
+        stable,
+      ),
+      token0: t0,
+      token1: t1,
+      fee: this.stableFee,
+      stable,
+    }))
   }
 
   override async getReserves(
@@ -205,15 +201,12 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
           ?.address as Address,
         allowFailure: true,
         blockNumber: options?.blockNumber,
-        contracts: poolCodesToCreate.map(
-          (poolCode) =>
-            ({
-              address: poolCode.pool.address as Address,
-              chainId: this.chainId,
-              abi: this.getReservesAbi,
-              functionName: 'getReserves',
-            }) as const,
-        ),
+        contracts: poolCodesToCreate.map((poolCode) => ({
+          address: poolCode.pool.address as Address,
+          chainId: this.chainId,
+          abi: this.getReservesAbi,
+          functionName: 'getReserves',
+        })),
       })
       .catch((e) => {
         console.warn(
@@ -232,14 +225,12 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
           ?.address as Address,
         allowFailure: true,
         blockNumber: options?.blockNumber,
-        contracts: pools.map((p) => ({
-          address: this.factory[
-            this.chainId as keyof typeof this.factory
-          ]! as Address,
+        contracts: pools.map((pool) => ({
+          address: this.factory[this.chainId]! as Address,
           chainId: this.chainId,
           abi: getFeeAbi,
           functionName: 'getFee',
-          args: [p.address, p.stable],
+          args: [pool.address, pool.stable],
         })),
       })
       .catch((e) => {
@@ -254,11 +245,12 @@ export abstract class VelodromeV2BaseProvider extends UniswapV2BaseProvider {
 }
 
 /**
- * Computes Velodrome V2 pool address from the given factory, pool impl, tokens and stable
+ * Computes Velodrome V2 pool address from the given factory,
+ * pool impl address, tokens and stable
  */
 export function computeVelodromeV2PoolAddress(
   factory: Address,
-  impl: Address,
+  poolImpl: Address,
   tokenA: Token,
   tokenB: Token,
   stable: boolean,
@@ -271,10 +263,11 @@ export function computeVelodromeV2PoolAddress(
     [token0.address, token1.address, stable],
   )
   // Velodrome V2 doesnt have classic initcode hash, it uses openzeppelin Clone contract instead
-  const initCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${impl!.replace(
-    '0x',
-    '',
-  )}5af43d82803e903d91602b57fd5bf3` as Hex
+  const initCode =
+    `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${poolImpl!.replace(
+      '0x',
+      '',
+    )}5af43d82803e903d91602b57fd5bf3` as Hex
   const initCodeHash = keccak256(initCode)
   const create2Inputs = [
     '0xff',
@@ -287,5 +280,6 @@ export function computeVelodromeV2PoolAddress(
   const sanitizedInputs = `0x${create2Inputs
     .map((i) => i.slice(2))
     .join('')}` as Hex
+
   return getAddress(`0x${keccak256(sanitizedInputs).slice(-40)}`)
 }
