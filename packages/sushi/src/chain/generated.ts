@@ -275,6 +275,24 @@ export default [
     shortName: 'pol',
   },
   {
+    chainId: 146,
+    explorers: [
+      {
+        name: 'sonic',
+        url: 'https://explorer.soniclabs.com',
+        icon: 'sonic',
+        standard: 'none',
+      },
+    ],
+    nativeCurrency: {
+      name: 'Sonic',
+      symbol: 'S',
+      decimals: 18,
+    },
+    name: 'Sonic Mainnet',
+    shortName: 'sonic',
+  },
+  {
     chainId: 199,
     explorers: [
       {

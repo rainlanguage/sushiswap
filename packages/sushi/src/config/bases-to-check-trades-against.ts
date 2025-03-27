@@ -1,5 +1,13 @@
 import { ChainId } from '../chain/index.js'
-import { MUSD, Token, USDB, USDe, cUSDX, sFLR } from '../currency/index.js'
+import {
+  MUSD,
+  Token,
+  USDB,
+  USDe,
+  cUSDX,
+  sFLR,
+  scUSD,
+} from '../currency/index.js'
 import {
   AAVE,
   BUSD,
@@ -498,5 +506,13 @@ export const BASES_TO_CHECK_TRADES_AGAINST: {
     WBTC[ChainId.BERA],
     USDC[ChainId.BERA],
     USDe,
+  ],
+  [ChainId.SONIC]: [
+    WNATIVE[ChainId.SONIC],
+    USDC[ChainId.SONIC],
+    USDT[ChainId.SONIC],
+    WETH9[ChainId.SONIC],
+    WBTC[ChainId.SONIC],
+    scUSD,
   ],
 }

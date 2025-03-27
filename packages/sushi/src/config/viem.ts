@@ -565,6 +565,37 @@ export const berachain = {
   },
 } as const
 
+export const sonic = {
+  id: ChainId.SONIC,
+  name: 'Sonic Mainnet',
+  network: 'Sonic',
+  nativeCurrency: { name: 'Sonic', symbol: 'S', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://sonic.drpc.org'],
+    },
+    public: {
+      http: ['https://rpc.soniclabs.com'],
+    },
+  },
+  blockExplorers: {
+    etherscan: {
+      name: 'Sonic Explorer',
+      url: 'https://sonicscan.org',
+    },
+    default: {
+      name: 'Sonic Explorer',
+      url: 'https://sonicscan.org',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11' as Address,
+      blockCreated: 60,
+    },
+  },
+} as const
+
 export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.ARBITRUM_NOVA]: http(arbitrumNova.rpcUrls.default.http[0]),
   [ChainId.ARBITRUM]: http(arbitrum.rpcUrls.default.http[0]),
@@ -604,6 +635,7 @@ export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.BLAST]: http(blast.rpcUrls.default.http[0]),
   [ChainId.FLARE]: http(flare.rpcUrls.default.http[0]),
   [ChainId.BERA]: http(berachain.rpcUrls.default.http[0]),
+  [ChainId.SONIC]: http(sonic.rpcUrls.default.http[0]),
   /* Testnets */ // TODO: add testnet transports
   [ChainId.ARBITRUM_TESTNET]: http(arbitrumSepolia.rpcUrls.default.http[0]),
   [ChainId.AVALANCHE_TESTNET]: http(avalancheFuji.rpcUrls.default.http[0]),
@@ -654,6 +686,7 @@ export const publicChains = [
   flare as Chain,
   matchain,
   berachain,
+  sonic,
 
   /* Testnets */
   arbitrumSepolia as Chain,
@@ -836,6 +869,10 @@ export const publicClientConfig = {
   [ChainId.BERA]: {
     chain: berachain as Chain,
     transport: publicTransports[ChainId.BERA],
+  },
+  [ChainId.SONIC]: {
+    chain: sonic as Chain,
+    transport: publicTransports[ChainId.SONIC],
   },
 
   /* Testnets */
