@@ -705,6 +705,13 @@ export const WNATIVE = {
     symbol: 'WBERA',
     name: 'Wrapped Bera',
   }),
+  [ChainId.SONIC]: new Token({
+    chainId: ChainId.SONIC,
+    address: WNATIVE_ADDRESS[ChainId.SONIC],
+    decimals: 18,
+    symbol: 'WS',
+    name: 'Wrapped Sonic',
+  }),
 } as const
 
 export const SUSHI = addressMapToTokenMap(
@@ -1260,4 +1267,12 @@ export const weETH = new Token({
   decimals: 18,
   symbol: 'weETH',
   name: 'Wrapped eETH',
+})
+
+export const scUSD = new Token({
+  chainId: ChainId.SONIC,
+  address: '0xd3DCe716f3eF535C5Ff8d041c1A41C3bd89b97aE',
+  decimals: 6,
+  symbol: 'scUSD',
+  name: 'Sonic USD',
 })

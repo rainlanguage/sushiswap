@@ -63,6 +63,8 @@ import { QuickSwapV3Provider } from './liquidity-providers/QuickswapV3.js'
 import { RingExchangeV2Provider } from './liquidity-providers/RingExchangeV2.js'
 import { RingExchangeV3Provider } from './liquidity-providers/RingExchangeV3.js'
 import { ScribeProvider } from './liquidity-providers/Scribe.js'
+import { ShadowV2Provider } from './liquidity-providers/ShadowV2.js'
+import { ShadowV3Provider } from './liquidity-providers/ShadowV3.js'
 import { ShibaSwapProvider } from './liquidity-providers/ShibaSwap.js'
 import { SolarbeamProvider } from './liquidity-providers/Solarbeam.js'
 import { SparkDexV2Provider } from './liquidity-providers/SparkDexV2.js'
@@ -74,6 +76,8 @@ import { SquadSwapV2Provider } from './liquidity-providers/SquadSwapV2.js'
 import { SushiSwapV2Provider } from './liquidity-providers/SushiSwapV2.js'
 import { SushiSwapV3Provider } from './liquidity-providers/SushiSwapV3.js'
 import { SwapBlastProvider } from './liquidity-providers/SwapBlast.js'
+import { SwapxV2Provider } from './liquidity-providers/SwapXV2.js'
+import { SwapxV3Provider } from './liquidity-providers/SwapXV3.js'
 import { SwapsicleProvider } from './liquidity-providers/Swapsicle.js'
 import {
   ThrusterV2_1Provider,
@@ -243,6 +247,8 @@ export class DataFetcher {
       RingExchangeV2Provider,
       RingExchangeV3Provider,
       ScribeProvider,
+      ShadowV2Provider,
+      ShadowV3Provider,
       ShibaSwapProvider,
       SolarbeamProvider,
       SparkDexV2Provider,
@@ -255,6 +261,8 @@ export class DataFetcher {
       SushiSwapV3Provider,
       SwapBlastProvider,
       SwapsicleProvider,
+      SwapxV2Provider,
+      SwapxV3Provider,
       ThrusterV2_1Provider,
       ThrusterV2_3Provider,
       ThrusterV3Provider,

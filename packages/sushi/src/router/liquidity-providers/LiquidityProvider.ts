@@ -89,6 +89,10 @@ export enum LiquidityProviders {
   NileV3 = 'NileV3',
   KodiakV2 = 'KodiakV2',
   KodiakV3 = 'KodiakV3',
+  ShadowV2 = 'ShadowV2',
+  ShadowV3 = 'ShadowV3',
+  SwapxV2 = 'SwapxV2',
+  SwapxV3 = 'SwapxV3',
 }
 
 export abstract class LiquidityProvider {
@@ -238,6 +242,8 @@ export const UniV2LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.MMFinance,
   LiquidityProviders.KodiakV2,
   LiquidityProviders.NileV2,
+  LiquidityProviders.SwapxV2,
+  LiquidityProviders.ShadowV2,
 ]
 
 export const UniV3LiquidityProviders: LiquidityProviders[] = [
@@ -270,4 +276,6 @@ export const UniV3LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.VelodromeSlipstream,
   LiquidityProviders.NileV3,
   LiquidityProviders.KodiakV3,
+  LiquidityProviders.ShadowV3,
+  LiquidityProviders.SwapxV3,
 ]
