@@ -32,6 +32,7 @@ import { GlyphV4Provider } from './liquidity-providers/GlyphV4.js'
 import { GravityFinanceProvider } from './liquidity-providers/GravityFinance.js'
 import { HoneySwapProvider } from './liquidity-providers/HoneySwap.js'
 import { HorizonProvider } from './liquidity-providers/Horizon.js'
+import { HydrexProvider } from './liquidity-providers/Hydrex.js'
 import { HyperBlastProvider } from './liquidity-providers/HyperBlast.js'
 import { JetSwapProvider } from './liquidity-providers/JetSwap.js'
 import { KimV4Provider } from './liquidity-providers/KimV4.js'
@@ -218,6 +219,7 @@ export class DataFetcher {
       HoneySwapProvider,
       HorizonProvider,
       HyperBlastProvider,
+      HydrexProvider,
       JetSwapProvider,
       KimV4Provider,
       KinetixV2Provider,

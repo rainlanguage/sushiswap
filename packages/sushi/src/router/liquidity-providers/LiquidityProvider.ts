@@ -242,7 +242,6 @@ export const UniV2LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.MMFinance,
   LiquidityProviders.KodiakV2,
   LiquidityProviders.NileV2,
-  LiquidityProviders.Hydrex,
 ]
 
 export const UniV3LiquidityProviders: LiquidityProviders[] = [
@@ -276,4 +275,5 @@ export const UniV3LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.VelodromeSlipstream,
   LiquidityProviders.NileV3,
   LiquidityProviders.KodiakV3,
+  LiquidityProviders.Hydrex,
 ]
