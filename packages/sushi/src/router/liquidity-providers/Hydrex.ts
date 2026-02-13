@@ -1,9 +1,9 @@
 import { PublicClient } from 'viem'
 import { ChainId } from '../../chain/index.js'
-import { AlgebraV2BaseProvider } from './AlgebraV2Base.js'
+import { AlgebraIntegralV1_2BaseProvider } from './AlgebraIntegralV1_2Base.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 
-export class HydrexProvider extends AlgebraV2BaseProvider {
+export class HydrexProvider extends AlgebraIntegralV1_2BaseProvider {
   constructor(chainId: ChainId, web3Client: PublicClient) {
     const factory = {
       [ChainId.BASE]: '0x36077D39cdC65E1e3FB65810430E5b2c4D5fA29E',

@@ -146,6 +146,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
         reserve1: 0n,
         liquidity: 0n,
         blockNumber: options?.blockNumber ?? 0n,
+        tick,
       })
     })
 
@@ -227,6 +228,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
           pool.liquidity,
           pool.sqrtPriceX96,
           this.getMaxTickDiapason(pool.activeTick, pool),
+          undefined,
+          pool.tick,
         )
 
         return new UniV3PoolCode(

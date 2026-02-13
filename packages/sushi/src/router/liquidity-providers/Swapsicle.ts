@@ -1,9 +1,9 @@
 import { PublicClient } from 'viem'
 import { ChainId } from '../../chain/index.js'
-import { AlgebraV2BaseProvider } from './AlgebraV2Base.js'
+import { AlgebraIntegralV1BaseProvider } from './AlgebraIntegralV1Base.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 
-export class SwapsicleProvider extends AlgebraV2BaseProvider {
+export class SwapsicleProvider extends AlgebraIntegralV1BaseProvider {
   constructor(chainId: ChainId, web3Client: PublicClient) {
     const factory = {
       [ChainId.TELOS]: '0xA09BAbf9A48003ae9b9333966a8Bda94d820D0d9',

@@ -425,6 +425,7 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         liquidity: 0n,
         blockNumber: options?.blockNumber ?? 0n,
         feeType: pool.feeType,
+        tick,
       })
     })
 
