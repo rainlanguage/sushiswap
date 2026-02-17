@@ -342,7 +342,7 @@ export class RainDataFetcher extends DataFetcher {
     const logsPromises = []
     const blockNumberSlices = []
     while (fromBlockSlice < untilBlock) {
-      let toBlock = untilBlock
+      let toBlock = untilBlock + 1n
       if (fromBlockSlice + 5n < untilBlock) {
         toBlock = fromBlockSlice + 5n
       }
@@ -352,7 +352,7 @@ export class RainDataFetcher extends DataFetcher {
           events: this.eventsAbi,
           address: addresses as `0x${string}`[],
           fromBlock: fromBlockSlice,
-          toBlock,
+          toBlock: toBlock - 1n,
         }),
       )
       fromBlockSlice += 5n
