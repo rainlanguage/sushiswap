@@ -176,14 +176,18 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
               if (sqrtPriceX96 !== undefined) pool.sqrtPriceX96 = sqrtPriceX96
               if (liquidity !== undefined) pool.liquidity = liquidity
               // need to refecth balance if there custom fee on swap
+              const onSwapPoolExists = this.onSwapPluginFeeUpdatePools.find(
+                (v) => v.address.toLowerCase() === pool.address.toLowerCase(),
+              )
               if (pluginFee > 0n || overrideFee > 0n) {
-                if (
-                  !this.onSwapPluginFeeUpdatePools.find(
-                    (v) =>
-                      v.address.toLowerCase() === pool.address.toLowerCase(),
-                  )
-                ) {
+                if (!onSwapPoolExists) {
                   this.onSwapPluginFeeUpdatePools.push(pool)
+                  const index = this.newTicksQueue.findIndex(
+                    (v) => v[0].address === pool.address,
+                  )
+                  if (index > -1) {
+                    this.newTicksQueue.splice(index, 1)
+                  }
                 }
                 if (tick !== undefined) {
                   pool.tick = tick
@@ -191,19 +195,21 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
                     Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
                 }
               } else if (tick !== undefined) {
-                pool.tick = tick
-                pool.activeTick =
-                  Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
-                const newTicks = this.onPoolTickChange(pool.activeTick, pool)
-                const queue = this.newTicksQueue.find(
-                  (v) => v[0].address === pool.address,
-                )
-                if (queue) {
-                  for (const t of newTicks) {
-                    if (!queue[1].includes(t)) queue[1].push(t)
+                if (!onSwapPoolExists) {
+                  pool.tick = tick
+                  pool.activeTick =
+                    Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
+                  const newTicks = this.onPoolTickChange(pool.activeTick, pool)
+                  const queue = this.newTicksQueue.find(
+                    (v) => v[0].address === pool.address,
+                  )
+                  if (queue) {
+                    for (const t of newTicks) {
+                      if (!queue[1].includes(t)) queue[1].push(t)
+                    }
+                  } else {
+                    this.newTicksQueue.push([pool, newTicks])
                   }
-                } else {
-                  this.newTicksQueue.push([pool, newTicks])
                 }
               }
             }
