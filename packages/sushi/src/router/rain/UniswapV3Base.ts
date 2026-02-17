@@ -642,6 +642,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
               if (sqrtPriceX96 !== undefined) pool.sqrtPriceX96 = sqrtPriceX96
               if (liquidity !== undefined) pool.liquidity = liquidity
               if (tick !== undefined) {
+                pool.tick = tick
                 pool.activeTick =
                   Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
                 const newTicks = this.onPoolTickChange(pool.activeTick, pool)

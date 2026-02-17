@@ -176,9 +176,22 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
               if (sqrtPriceX96 !== undefined) pool.sqrtPriceX96 = sqrtPriceX96
               if (liquidity !== undefined) pool.liquidity = liquidity
               // need to refecth balance if there custom fee on swap
-              if (overrideFee > 0n || pluginFee > 0n) {
-                this.onSwapPluginFeeUpdatePools.push(pool)
+              if (pluginFee > 0n || overrideFee > 0n) {
+                if (
+                  !this.onSwapPluginFeeUpdatePools.find(
+                    (v) =>
+                      v.address.toLowerCase() === pool.address.toLowerCase(),
+                  )
+                ) {
+                  this.onSwapPluginFeeUpdatePools.push(pool)
+                }
+                if (tick !== undefined) {
+                  pool.tick = tick
+                  pool.activeTick =
+                    Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
+                }
               } else if (tick !== undefined) {
+                pool.tick = tick
                 pool.activeTick =
                   Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
                 const newTicks = this.onPoolTickChange(pool.activeTick, pool)
