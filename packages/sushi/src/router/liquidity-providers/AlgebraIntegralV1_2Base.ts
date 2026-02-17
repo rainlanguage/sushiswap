@@ -76,7 +76,7 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
    */
   override handlePoolEvents(log: Log) {
     const logAddress = log.address.toLowerCase()
-    const pool = this.pools.get(logAddress)!
+    const pool = this.pools.get(logAddress)
     if (pool) {
       try {
         const event = parseEventLogs({ logs: [log], abi: this.eventsAbi })[0]!
