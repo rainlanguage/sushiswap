@@ -199,8 +199,8 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
                   (v) => v[0].address === pool.address,
                 )
                 if (queue) {
-                  for (const tick of newTicks) {
-                    if (!queue[1].includes(tick)) queue[1].push(tick)
+                  for (const t of newTicks) {
+                    if (!queue[1].includes(t)) queue[1].push(t)
                   }
                 } else {
                   this.newTicksQueue.push([pool, newTicks])
