@@ -180,6 +180,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
         reserve1: 0n,
         liquidity: 0n,
         blockNumber: options?.blockNumber ?? 0n,
+        tick,
       })
     })
 

@@ -92,11 +92,12 @@ export class UniV3Pool extends RPool {
     fee: number,
     reserve0: bigint,
     reserve1: bigint,
-    tick: number,
+    activeTick: number,
     liquidity: bigint,
     sqrtPriceX96: bigint,
     ticks: CLTick[],
     nearestTick?: number,
+    tick?: number,
   ) {
     super(
       address,
@@ -109,6 +110,8 @@ export class UniV3Pool extends RPool {
       TYPICAL_SWAP_GAS_COST,
     )
     this.ticks = ticks
+    this.tick = tick
+    this.activeTick = activeTick
     if (address !== undefined) {
       if (this.ticks.length === 0) {
         this.ticks.push({ index: CL_MIN_TICK, DLiquidity: ZERO })
@@ -121,7 +124,7 @@ export class UniV3Pool extends RPool {
 
       this.liquidity = liquidity
       this.sqrtPriceX96 = sqrtPriceX96
-      this.nearestTick = nearestTick ?? this._findTickForPrice(tick)
+      this.nearestTick = nearestTick ?? this._findTickForPrice(activeTick)
     } else {
       // for deserialization
       this.liquidity = undefined as unknown as bigint

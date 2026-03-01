@@ -40,6 +40,8 @@ export abstract class RPool {
   // gasSpent: number = 0
   readonly minLiquidity: number
   readonly swapGasCost: number
+  tick?: number | undefined
+  activeTick?: number | undefined
 
   constructor(
     address: Address,
@@ -50,6 +52,8 @@ export abstract class RPool {
     reserve1: bigint,
     minLiquidity = TYPICAL_MINIMAL_LIQUIDITY,
     swapGasCost = TYPICAL_SWAP_GAS_COST,
+    tick?: number,
+    activeTick?: number | undefined,
   ) {
     this.address = address || '0x'
     this.token0 = token0
@@ -63,6 +67,8 @@ export abstract class RPool {
     this.swapGasCost = swapGasCost
     this.reserve0 = reserve0
     this.reserve1 = reserve1
+    this.tick = tick
+    this.activeTick = activeTick
   }
 
   updateReserves(res0: bigint, res1: bigint) {

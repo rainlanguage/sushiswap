@@ -35,6 +35,7 @@ export interface V3Pool {
   fee: UniV3FeeType[keyof UniV3FeeType]
   sqrtPriceX96: bigint
   activeTick: number
+  tick: number
 }
 
 export const NUMBER_OF_SURROUNDING_TICKS = 1000 // 10% price impact
@@ -175,6 +176,7 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
         ...pool,
         sqrtPriceX96,
         activeTick,
+        tick,
       })
     })
 

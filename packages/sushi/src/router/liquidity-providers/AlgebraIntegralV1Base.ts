@@ -17,6 +17,6 @@ export const globalStateAbi = [
   },
 ] as const
 
-export abstract class AlgebraV2BaseProvider extends AlgebraV1BaseProvider {
+export abstract class AlgebraIntegralV1BaseProvider extends AlgebraV1BaseProvider {
   override gloablStateAbi = globalStateAbi as any
 }

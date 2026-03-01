@@ -146,6 +146,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
         reserve1: 0n,
         liquidity: 0n,
         blockNumber: options?.blockNumber ?? 0n,
+        tick,
       })
     })
 
@@ -227,6 +228,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
           pool.liquidity,
           pool.sqrtPriceX96,
           this.getMaxTickDiapason(pool.activeTick, pool),
+          undefined,
+          pool.tick,
         )
 
         return new UniV3PoolCode(
@@ -639,6 +642,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
               if (sqrtPriceX96 !== undefined) pool.sqrtPriceX96 = sqrtPriceX96
               if (liquidity !== undefined) pool.liquidity = liquidity
               if (tick !== undefined) {
+                pool.tick = tick
                 pool.activeTick =
                   Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
                 const newTicks = this.onPoolTickChange(pool.activeTick, pool)
@@ -646,8 +650,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
                   (v) => v[0].address === pool.address,
                 )
                 if (queue) {
-                  for (const tick of newTicks) {
-                    if (!queue[1].includes(tick)) queue[1].push(tick)
+                  for (const t of newTicks) {
+                    if (!queue[1].includes(t)) queue[1].push(t)
                   }
                 } else {
                   this.newTicksQueue.push([pool, newTicks])

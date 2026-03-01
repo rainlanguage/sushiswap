@@ -26,8 +26,9 @@ describe('RainDataFetcher tests', async () => {
   const protocols = {
     univ2: LiquidityProviders.UniswapV2, // Univ2
     univ3: LiquidityProviders.UniswapV3, // Univ3
-    algebra: LiquidityProviders.KimV4, // Algebra
+    algebraV1: LiquidityProviders.KimV4, // Algebra Integral v1/v1.1
     slipstream: LiquidityProviders.AerodromeSlipstream, // Slipstream
+    algebraV1_2: LiquidityProviders.Hydrex, // Algebra Integral V1.2/v1.2.1
   }
 
   // wait 60 sec before each test to avoid rpc ratelimiting
@@ -61,9 +62,9 @@ describe('RainDataFetcher tests', async () => {
     )
   })
 
-  it('should correctly update pools data by logs for Algebra protocol', async () => {
+  it('should correctly update pools data by logs for Algebra Integral v1/v1.1 protocol', async () => {
     await testRainDataFetcher(
-      [protocols.algebra],
+      [protocols.algebraV1],
       client,
       fromToken,
       toToken,
@@ -77,6 +78,19 @@ describe('RainDataFetcher tests', async () => {
   it('should correctly update pools data by logs for Slipstream protocol', async () => {
     await testRainDataFetcher(
       [protocols.slipstream],
+      client,
+      fromToken,
+      toToken,
+      amountIn,
+      gasPrice,
+      currentBlockNumber,
+      oldBlockNumber,
+    )
+  })
+
+  it('should correctly update pools data by logs for Algebra Integral v1.2/v1.2.1 protocol', async () => {
+    await testRainDataFetcher(
+      [protocols.algebraV1_2],
       client,
       fromToken,
       toToken,
