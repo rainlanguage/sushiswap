@@ -286,6 +286,7 @@ export class RainDataFetcher extends DataFetcher {
    * and returns true if there was a new pool deployed and false otherwise
    * @param untilBlock - (optional) The block number to update to, if left undefined,
    * pools data will be updated to latest block number
+   * @returns true if a new pool has been created during the update process, else false
    */
   async updatePools(untilBlock?: bigint): Promise<boolean> {
     let fromBlock = -1n
@@ -325,14 +326,15 @@ export class RainDataFetcher extends DataFetcher {
     if (fromBlock === -1n) return false
     if (fromBlock === untilBlock) return false
     if (fromBlock > untilBlock) {
-      throw [
-        'pools data are cached at higher block height than the requested block height',
-        'if you wish to get pools data at your requested block height',
-        'consider calling fetchPoolsForToken() with "ignoreCache" option',
-        'so that pools data can fetched for lower block height than what they are currently cached at',
-        `pools block height: ${fromBlock}`,
-        `requested block height: ${untilBlock}`,
-      ].join(', ')
+      // throw [
+      //   'pools data are cached at higher block height than the requested block height',
+      //   'if you wish to get pools data at your requested block height',
+      //   'consider calling fetchPoolsForToken() with "ignoreCache" option',
+      //   'so that pools data can fetched for lower block height than what they are currently cached at',
+      //   `pools block height: ${fromBlock}`,
+      //   `requested block height: ${untilBlock}`,
+      // ].join(', ')
+      return false;
     }
     if (!poolAddresses.length) return false
     addresses.push(...poolAddresses)
