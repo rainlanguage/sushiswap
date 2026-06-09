@@ -1,6 +1,9 @@
 import { Log, parseAbiItem, parseEventLogs } from 'viem'
+import { CLTick } from '../../tines/CLPool.js'
+import { RainDataFetcherOptions } from '../rain/RainDataFetcher.js'
 import { RainV3Pool } from '../rain/UniswapV3Base.js'
 import { AlgebraIntegralV1BaseProvider } from './AlgebraIntegralV1Base.js'
+import { NUMBER_OF_SURROUNDING_TICKS } from './UniswapV3Base.js'
 
 export const AlgebraIntegralV1_2EventsAbi = [
   parseAbiItem(
@@ -222,4 +225,82 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
       } catch {}
     }
   }
+
+  /**
+   * Calculates and returns the list of current ticks for the given pool
+   */
+  override getMaxTickDiapason(tick: number, pool: RainV3Pool): CLTick[] {
+    const currentTickIndex = bitmapIndex(tick, pool.tickSpacing)
+    if (!pool.ticks.has(currentTickIndex)) return []
+    let minIndex
+    let maxIndex
+    for (minIndex = currentTickIndex; pool.ticks.has(minIndex); --minIndex);
+    for (maxIndex = currentTickIndex + 1; pool.ticks.has(maxIndex); ++maxIndex);
+    if (maxIndex - minIndex <= 1) return []
+
+    let poolTicks: CLTick[] = []
+    for (let i = minIndex + 1; i < maxIndex; ++i)
+      poolTicks = poolTicks.concat(pool.ticks.get(i)!)
+
+    const lowerUnknownTick = (minIndex + 1) * 256 - 1
+    console.assert(
+      poolTicks.length === 0 || lowerUnknownTick < poolTicks[0]!.index,
+      'Error 236: unexpected min tick index',
+    )
+    poolTicks.unshift({
+      index: lowerUnknownTick,
+      DLiquidity: 0n,
+    })
+    const upperUnknownTick = maxIndex * 256
+    console.assert(
+      poolTicks[poolTicks.length - 1]!.index < upperUnknownTick,
+      'Error 244: unexpected max tick index',
+    )
+    poolTicks.push({
+      index: upperUnknownTick,
+      DLiquidity: 0n,
+    })
+
+    return poolTicks
+  }
+
+  /**
+   * Fetches ticks capped at pool boundries of the given list of pools
+   */
+  override async getTicks(
+    existingPools: RainV3Pool[],
+    options?: RainDataFetcherOptions,
+  ): Promise<Map<number, CLTick[]>[] | undefined> {
+    const [minIndexes, maxIndexes] = this.getIndexes(existingPools)
+    const wordList = existingPools.map((pool, i) => {
+      const minIndex = minIndexes[i]!
+      const maxIndex = maxIndexes[i]!
+
+      return [
+        pool,
+        Array.from({ length: maxIndex - minIndex + 1 }, (_, i) => minIndex + i),
+      ] as [RainV3Pool, number[]]
+    })
+    return await this.getTicksInner(wordList, options)
+  }
+
+  override getIndexes(existingPools: RainV3Pool[]): [number[], number[]] {
+    const minIndexes = existingPools.map((pool) =>
+      bitmapIndex(
+        pool.activeTick - NUMBER_OF_SURROUNDING_TICKS,
+        pool.tickSpacing,
+      ),
+    )
+    const maxIndexes = existingPools.map((pool) =>
+      bitmapIndex(
+        pool.activeTick + NUMBER_OF_SURROUNDING_TICKS,
+        pool.tickSpacing,
+      ),
+    )
+    return [minIndexes, maxIndexes]
+  }
+}
+
+export const bitmapIndex = (tick: number, _tickSpacing: number) => {
+  return Math.floor(tick / 256)
 }
