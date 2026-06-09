@@ -441,6 +441,13 @@ export const BASES_TO_CHECK_TRADES_AGAINST: {
       symbol: 'cbETH',
       name: 'Coinbase Wrapped Staked ETH',
     }),
+    new Token({
+      chainId: ChainId.BASE,
+      address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+      decimals: 8,
+      symbol: 'cbBTC',
+      name: 'Coinbase Wrapped BTC',
+    }),
     USDC[ChainId.BASE],
     new Token({
       chainId: ChainId.BASE,
