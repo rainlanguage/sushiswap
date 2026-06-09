@@ -334,7 +334,7 @@ export class RainDataFetcher extends DataFetcher {
       //   `pools block height: ${fromBlock}`,
       //   `requested block height: ${untilBlock}`,
       // ].join(', ')
-      return false;
+      return false
     }
     if (!poolAddresses.length) return false
     addresses.push(...poolAddresses)
