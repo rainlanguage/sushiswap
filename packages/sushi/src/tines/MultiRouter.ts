@@ -112,11 +112,18 @@ export function findMultiRouteExactIn(
     )
     if (bestFlowNumber === 1) return outSingle
 
-    const outMulti = g.findBestRouteExactIn(from, to, amountIn, bestFlowNumber)
     if (pickRoute) {
       if (pickRoute === 'single') return outSingle
-      else return outMulti
+      else {
+        return g.findBestRouteExactIn(from, to, amountIn, bestFlowNumber)
+      }
     } else {
+      const outMulti = g.findBestRouteExactIn(
+        from,
+        to,
+        amountIn,
+        bestFlowNumber,
+      )
       return getBetterRouteExactIn(outSingle, outMulti)
     }
   } catch (_e) {

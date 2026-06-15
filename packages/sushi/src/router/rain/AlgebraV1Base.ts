@@ -11,8 +11,10 @@ import {
 } from 'viem'
 import { ChainId } from '../../chain/index.js'
 import { Token } from '../../currency/index.js'
+import { CLTick } from '../../tines/CLPool.js'
 import { getCurrencyCombinations } from '../get-currency-combinations.js'
 import {
+  NUMBER_OF_SURROUNDING_TICKS,
   PoolFilter,
   StaticPoolUniV3,
 } from '../liquidity-providers/UniswapV3Base.js'
@@ -270,6 +272,141 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
       default:
     }
   }
+
+  /**
+   * Calculates and returns the list of current ticks for the given pool
+   */
+  override getMaxTickDiapason(tick: number, pool: RainV3Pool): CLTick[] {
+    const currentTickIndex = bitmapIndex(tick, pool.tickSpacing)
+    if (!pool.ticks.has(currentTickIndex)) return []
+    let minIndex
+    let maxIndex
+    for (minIndex = currentTickIndex; pool.ticks.has(minIndex); --minIndex);
+    for (maxIndex = currentTickIndex + 1; pool.ticks.has(maxIndex); ++maxIndex);
+    if (maxIndex - minIndex <= 1) return []
+
+    let poolTicks: CLTick[] = []
+    for (let i = minIndex + 1; i < maxIndex; ++i)
+      poolTicks = poolTicks.concat(pool.ticks.get(i)!)
+
+    const lowerUnknownTick = (minIndex + 1) * 256 - 1
+    console.assert(
+      poolTicks.length === 0 || lowerUnknownTick < poolTicks[0]!.index,
+      'Error 236: unexpected min tick index',
+    )
+    poolTicks.unshift({
+      index: lowerUnknownTick,
+      DLiquidity: 0n,
+    })
+    const upperUnknownTick = maxIndex * 256
+    console.assert(
+      poolTicks[poolTicks.length - 1]!.index < upperUnknownTick,
+      'Error 244: unexpected max tick index',
+    )
+    poolTicks.push({
+      index: upperUnknownTick,
+      DLiquidity: 0n,
+    })
+
+    return poolTicks
+  }
+
+  /**
+   * Fetches ticks capped at pool boundries of the given list of pools
+   */
+  override async getTicks(
+    existingPools: RainV3Pool[],
+    options?: RainDataFetcherOptions,
+  ): Promise<Map<number, CLTick[]>[] | undefined> {
+    const [minIndexes, maxIndexes] = this.getIndexes(existingPools)
+    const wordList = existingPools.map((pool, i) => {
+      const minIndex = minIndexes[i]!
+      const maxIndex = maxIndexes[i]!
+
+      return [
+        pool,
+        Array.from({ length: maxIndex - minIndex + 1 }, (_, i) => minIndex + i),
+      ] as [RainV3Pool, number[]]
+    })
+    return await this.getTicksInner(wordList, options)
+  }
+
+  override getIndexes(existingPools: RainV3Pool[]): [number[], number[]] {
+    const minIndexes = existingPools.map((pool) =>
+      bitmapIndex(
+        pool.activeTick - NUMBER_OF_SURROUNDING_TICKS,
+        pool.tickSpacing,
+      ),
+    )
+    const maxIndexes = existingPools.map((pool) =>
+      bitmapIndex(
+        pool.activeTick + NUMBER_OF_SURROUNDING_TICKS,
+        pool.tickSpacing,
+      ),
+    )
+    return [minIndexes, maxIndexes]
+  }
+
+  /**
+   * Adds a new tick to the given pool's tick list
+   */
+  override addTick(tick: number, amount: bigint, pool: RainV3Pool) {
+    const tickWord = bitmapIndex(tick, pool.tickSpacing)
+    const ticks = pool.ticks.get(tickWord)
+    if (ticks !== undefined) {
+      if (ticks.length === 0 || tick < ticks[0]!.index) {
+        ticks.unshift({ index: tick, DLiquidity: amount })
+        return
+      }
+      if (tick === ticks[0]!.index) {
+        ticks[0]!.DLiquidity = ticks[0]!.DLiquidity + amount
+        if (ticks[0]!.DLiquidity === 0n) ticks.splice(0, 1)
+        return
+      }
+
+      let start = 0
+      let end = ticks.length
+      while (end - start > 1) {
+        const middle = Math.floor((start + end) / 2)
+        const index = ticks[middle]!.index
+        if (index < tick) start = middle
+        else if (index > tick) end = middle
+        else {
+          ticks[middle]!.DLiquidity = ticks[middle]!.DLiquidity + amount
+          if (ticks[middle]!.DLiquidity === 0n) ticks.splice(middle, 1)
+          return
+        }
+      }
+      ticks.splice(start + 1, 0, { index: tick, DLiquidity: amount })
+    }
+  }
+
+  /**
+   * Gets triggered if a pool's current tick get changed after processing event logs,
+   * this calculates the new tciks that need to be fetched from onchain which then
+   * takes place when afterProcessLog() is called
+   */
+  override onPoolTickChange(tick: number, pool: RainV3Pool): number[] {
+    const currentTickWord = bitmapIndex(tick, pool.tickSpacing)
+    const minWord = bitmapIndex(
+      tick - NUMBER_OF_SURROUNDING_TICKS,
+      pool.tickSpacing,
+    )
+    const maxWord = bitmapIndex(
+      tick + NUMBER_OF_SURROUNDING_TICKS,
+      pool.tickSpacing,
+    )
+
+    const direction = currentTickWord - minWord <= maxWord - currentTickWord
+    const wordNumber = maxWord - minWord
+    const newTicks: number[] = []
+    for (let i = wordNumber; i >= 0; --i) {
+      const wordIndex = currentTickWord + this.getJump(i, direction)
+      const wordState = pool.ticks.get(wordIndex)
+      if (wordState === undefined) newTicks.push(wordIndex)
+    }
+    return newTicks
+  }
 }
 
 // from packages/extractor/src/AlgebraExtractor.ts
@@ -295,4 +432,8 @@ export function getAlgebraPoolAddress(
   const sanitizedInputs = `0x${create2Inputs.map((i) => i.slice(2)).join('')}`
 
   return getAddress(`0x${keccak256(sanitizedInputs as Hex).slice(-40)}`)
+}
+
+export const bitmapIndex = (tick: number, _tickSpacing: number) => {
+  return Math.floor(tick / 256)
 }
