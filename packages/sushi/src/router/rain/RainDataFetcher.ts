@@ -351,8 +351,8 @@ export class RainDataFetcher extends DataFetcher {
     const blockNumberSlices = []
     while (fromBlockSlice < untilBlock) {
       let toBlock = untilBlock + 1n
-      if (fromBlockSlice + 5n < untilBlock) {
-        toBlock = fromBlockSlice + 5n
+      if (fromBlockSlice + 100n < untilBlock) {
+        toBlock = fromBlockSlice + 100n
       }
       blockNumberSlices.push(toBlock)
       logsPromises.push(
@@ -363,7 +363,7 @@ export class RainDataFetcher extends DataFetcher {
           toBlock: toBlock - 1n,
         }),
       )
-      fromBlockSlice += 5n
+      fromBlockSlice += 100n
     }
 
     // await logs and sort them from earliest block to latest
