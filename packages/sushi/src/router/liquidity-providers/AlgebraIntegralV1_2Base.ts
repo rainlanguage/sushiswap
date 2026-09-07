@@ -175,11 +175,31 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
               }
               if (sqrtPriceX96 !== undefined) pool.sqrtPriceX96 = sqrtPriceX96
               if (liquidity !== undefined) pool.liquidity = liquidity
-              // need to refecth balance if there custom fee on swap
+              // a plugin can override the pool fee per swap (eg hydrex does
+              // this on every swap) without ever writing it back to
+              // globalState, so the event carries the only accurate fee
+              const feeChanged =
+                typeof overrideFee === 'number' &&
+                overrideFee > 0 &&
+                overrideFee !== pool.fee
+              if (feeChanged) {
+                pool.fee = overrideFee as number
+              }
+              if (tick !== undefined) {
+                pool.tick = tick
+                pool.activeTick =
+                  Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
+              }
               const onSwapPoolExists = this.onSwapPluginFeeUpdatePools.find(
                 (v) => v.address.toLowerCase() === pool.address.toLowerCase(),
               )
-              if (pluginFee > 0n || overrideFee > 0n) {
+              // refetch balances and ticks when the plugin took an extra fee
+              // or changed the pool fee, a swap with an unchanged override
+              // fee needs no refetch and is treated like a plain swap
+              if (
+                (typeof pluginFee === 'number' && pluginFee > 0) ||
+                feeChanged
+              ) {
                 if (!onSwapPoolExists) {
                   this.onSwapPluginFeeUpdatePools.push(pool)
                   const index = this.newTicksQueue.findIndex(
@@ -189,27 +209,19 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
                     this.newTicksQueue.splice(index, 1)
                   }
                 }
-                if (tick !== undefined) {
-                  pool.tick = tick
-                  pool.activeTick =
-                    Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
-                }
-              } else if (tick !== undefined) {
-                if (!onSwapPoolExists) {
-                  pool.tick = tick
-                  pool.activeTick =
-                    Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
-                  const newTicks = this.onPoolTickChange(pool.activeTick, pool)
-                  const queue = this.newTicksQueue.find(
-                    (v) => v[0].address === pool.address,
-                  )
-                  if (queue) {
-                    for (const t of newTicks) {
-                      if (!queue[1].includes(t)) queue[1].push(t)
-                    }
-                  } else {
-                    this.newTicksQueue.push([pool, newTicks])
+              } else if (tick !== undefined && !onSwapPoolExists) {
+                // pools queued for a full refetch dont need new tick words,
+                // afterProcessLog() refetches their whole ticks range
+                const newTicks = this.onPoolTickChange(pool.activeTick, pool)
+                const queue = this.newTicksQueue.find(
+                  (v) => v[0].address === pool.address,
+                )
+                if (queue) {
+                  for (const t of newTicks) {
+                    if (!queue[1].includes(t)) queue[1].push(t)
                   }
+                } else {
+                  this.newTicksQueue.push([pool, newTicks])
                 }
               }
             }
