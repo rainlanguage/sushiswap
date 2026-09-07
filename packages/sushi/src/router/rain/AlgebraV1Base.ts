@@ -175,7 +175,8 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
         return
       }
       const fee = globalState[i]!.result?.[2] // fee
-      if (!fee) {
+      // zero is a valid fee, a plugin can set the base fee to 0
+      if (typeof fee !== 'number') {
         this.handleNullPool(poolAddress)
         return
       }
