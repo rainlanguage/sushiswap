@@ -305,10 +305,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
           }`,
         )
         // two balanceOf calls per pool
-        return Array.from(
-          { length: existingPools.length * 2 },
-          () => undefined,
-        )
+        return Array.from({ length: existingPools.length * 2 }, () => undefined)
       })
 
     const reserves = []
