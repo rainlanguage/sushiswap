@@ -152,9 +152,6 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
     const reservesPromise = this.getReserves(this.onSwapPluginFeeUpdatePools, {
       blockNumber: untilBlock,
     })
-    const ticksPromise = this.getTicks(this.onSwapPluginFeeUpdatePools, {
-      blockNumber: untilBlock,
-    })
     const newTicksQueue = [...this.newTicksQueue.splice(0)]
     if (newTicksQueue.length) {
       const newTicks = await this.getTicksInner(newTicksQueue, {
@@ -172,19 +169,14 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
       }
     }
     const reserves = await reservesPromise
-    const ticks = await ticksPromise
     await pluginFeesPromise
     for (let i = 0; i < this.onSwapPluginFeeUpdatePools.length; i++) {
       const pool = this.onSwapPluginFeeUpdatePools[i]
       const reserve = reserves[i]
-      const tick = ticks?.[i]
       if (!pool) continue
       if (typeof reserve !== 'undefined') {
         pool.reserve0 = reserve[0]!
         pool.reserve1 = reserve[1]!
-      }
-      if (typeof tick !== 'undefined') {
-        pool.ticks = tick
       }
     }
     this.onSwapPluginFeeUpdatePools = []
@@ -309,28 +301,22 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
                 pool.activeTick =
                   Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
               }
-              const onSwapPoolExists = this.onSwapPluginFeeUpdatePools.find(
-                (v) => v.address.toLowerCase() === pool.address.toLowerCase(),
-              )
-              // refetch balances and ticks when the plugin took an extra fee
-              // or changed the pool fee, a swap with an unchanged override
-              // fee needs no refetch and is treated like a plain swap
+              // refetch balances when the plugin took an extra fee or
+              // changed the pool fee, those swaps move amounts that the
+              // event does not report, tick data never drifts that way so
+              // it always updates through the incremental tick words below
               if (
                 (typeof pluginFee === 'number' && pluginFee > 0) ||
                 feeChanged
               ) {
+                const onSwapPoolExists = this.onSwapPluginFeeUpdatePools.find(
+                  (v) => v.address.toLowerCase() === pool.address.toLowerCase(),
+                )
                 if (!onSwapPoolExists) {
                   this.onSwapPluginFeeUpdatePools.push(pool)
-                  const index = this.newTicksQueue.findIndex(
-                    (v) => v[0].address === pool.address,
-                  )
-                  if (index > -1) {
-                    this.newTicksQueue.splice(index, 1)
-                  }
                 }
-              } else if (tick !== undefined && !onSwapPoolExists) {
-                // pools queued for a full refetch dont need new tick words,
-                // afterProcessLog() refetches their whole ticks range
+              }
+              if (tick !== undefined) {
                 const newTicks = this.onPoolTickChange(pool.activeTick, pool)
                 const queue = this.newTicksQueue.find(
                   (v) => v[0].address === pool.address,
