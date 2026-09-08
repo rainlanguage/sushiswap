@@ -320,6 +320,9 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         )
         return undefined
       })
+    // a failure of the whole multicall is an rpc problem, not proof that
+    // any pool is missing, so dont count null strikes, just retry later
+    if (!slot0) return []
 
     const feeTypes = await this.client
       .multicall({
@@ -352,22 +355,23 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
     })
 
     // get pool fees for dynamic fee type pools
+    const dynamicPools = staticPools.filter(
+      (pool) => pool.feeType === FeeType.Dynamic,
+    )
     const poolFees = await this.client
       .multicall({
         multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
         allowFailure: true,
         blockNumber: options?.blockNumber,
-        contracts: staticPools
-          .filter((pool) => pool.feeType === FeeType.Dynamic)
-          .map(
-            (pool) =>
-              ({
-                address: pool.address,
-                chainId: this.chainId,
-                abi: feeAbi,
-                functionName: 'fee',
-              }) as const,
-          ),
+        contracts: dynamicPools.map(
+          (pool) =>
+            ({
+              address: pool.address,
+              chainId: this.chainId,
+              abi: feeAbi,
+              functionName: 'fee',
+            }) as const,
+        ),
       })
       .catch((e) => {
         console.warn(
@@ -377,11 +381,19 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         )
         return undefined
       })
+    // fees keyed by pool address, index based consumption would misalign
+    // as soon as one dynamic pool gets skipped for a bad slot0
+    const dynamicPoolFees = new Map<string, number>()
+    dynamicPools.forEach((pool, i) => {
+      const fee = poolFees?.[i]?.result
+      if (typeof fee === 'number')
+        dynamicPoolFees.set(pool.address.toLowerCase(), fee)
+    })
 
     const existingPools: SlipstreamPool[] = []
     staticPools.forEach((pool, i) => {
       const poolAddress = pool.address.toLowerCase()
-      if (slot0 === undefined || !slot0[i]) {
+      if (!slot0[i]) {
         this.handleNullPool(poolAddress)
         return
       }
@@ -402,15 +414,14 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         } else if (pool.feeType === FeeType.Default) {
           return this.spacingFeeMap[pool.tickSpacing]!
         } else if (pool.feeType === FeeType.Dynamic) {
-          const _fee = poolFees?.shift()?.result
-          if (typeof _fee === 'number') return _fee
-          else return undefined
+          return dynamicPoolFees.get(poolAddress)
         } else {
           return this.spacingFeeMap[pool.tickSpacing]!
         }
       })()
       if (typeof fee !== 'number') {
-        this.handleNullPool(poolAddress)
+        // the pool exists (its slot0 read succeeded), only its fee could
+        // not be resolved, so skip it for this round without a null strike
         return
       }
 
@@ -456,6 +467,9 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
               this.tickSpacings.push(event.args.tickSpacing)
             }
             this.feeSpacingMap[event.args.fee] = event.args.tickSpacing
+            // spacingFeeMap is the map that fee resolution reads, without
+            // this entry every pool of the new spacing gets a void fee
+            this.spacingFeeMap[event.args.tickSpacing] = event.args.fee
             break
           }
           case 'CustomFeeSet': {
@@ -557,9 +571,14 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         pools.forEach((pool, i) => {
           const result = (poolFees as any).value?.[i]?.result
           if (typeof result === 'number') {
-            if (result === 0) pool.feeType = FeeType.Default
-            else if (result === ZERO_FEE_INDICATOR) pool.feeType = FeeType.Zero
-            else {
+            if (result === 0) {
+              pool.feeType = FeeType.Default
+              const spacingFee = this.spacingFeeMap[pool.tickSpacing]
+              if (typeof spacingFee === 'number') pool.fee = spacingFee
+            } else if (result === ZERO_FEE_INDICATOR) {
+              pool.feeType = FeeType.Zero
+              pool.fee = 0
+            } else {
               pool.feeType = FeeType.Dynamic
               newDynamicPools.push(pool)
             }
