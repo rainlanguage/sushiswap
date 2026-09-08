@@ -1,6 +1,29 @@
-import { Log, parseAbiItem, parseEventLogs } from 'viem'
+import { Address, Log, parseAbiItem, parseEventLogs } from 'viem'
+import { Token } from '../../currency/index.js'
+import { RainDataFetcherOptions } from '../rain/RainDataFetcher.js'
 import { RainV3Pool } from '../rain/UniswapV3Base.js'
 import { AlgebraIntegralV1BaseProvider } from './AlgebraIntegralV1Base.js'
+import { PoolFilter } from './UniswapV3Base.js'
+
+const pluginAbi = [
+  {
+    inputs: [],
+    name: 'plugin',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const
+
+const getCurrentFeeAbi = [
+  {
+    inputs: [],
+    name: 'getCurrentFee',
+    outputs: [{ internalType: 'uint16', name: 'fee', type: 'uint16' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const
 
 export const AlgebraIntegralV1_2EventsAbi = [
   parseAbiItem(
@@ -25,12 +48,107 @@ export const AlgebraIntegralV1_2EventsAbi = [
   ),
 ]
 
+// integral 1.2 pool with its plugin address, undefined until the first
+// successful read, the zero address marks a pool without a plugin
+export interface AlgebraIntegralV1_2Pool extends RainV3Pool {
+  plugin?: Address
+}
+
 export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1BaseProvider {
   override eventsAbi = AlgebraIntegralV1_2EventsAbi
   // used for pools that need reserve refetch upon swap with non zero plugin fee
   onSwapPluginFeeUpdatePools: RainV3Pool[] = []
 
+  override async fetchPoolData(
+    t0: Token,
+    t1: Token,
+    excludePools?: Set<string> | PoolFilter,
+    options?: RainDataFetcherOptions,
+  ): Promise<RainV3Pool[]> {
+    const pools = await super.fetchPoolData(t0, t1, excludePools, options)
+    if (pools.length === 0) return pools
+    await this.updatePluginFees(pools, options?.blockNumber)
+    return pools
+  }
+
+  /**
+   * Updates the fees of the given pools from their plugin's getCurrentFee()
+   * view. A dynamic fee plugin (eg hydrex) recalculates the fee at every
+   * swap, while globalState.lastFee only reports the fee of the last swap,
+   * so the plugin view carries the fee the next swap will actually pay.
+   * Pools without a plugin, or with a plugin lacking the view, keep their
+   * current fee
+   */
+  async updatePluginFees(
+    pools: AlgebraIntegralV1_2Pool[],
+    blockNumber?: bigint,
+  ) {
+    const unknown = pools.filter((pool) => pool.plugin === undefined)
+    if (unknown.length) {
+      const plugins = await this.client
+        .multicall({
+          multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
+          allowFailure: true,
+          blockNumber,
+          contracts: unknown.map(
+            (pool) =>
+              ({
+                address: pool.address as Address,
+                chainId: this.chainId,
+                abi: pluginAbi,
+                functionName: 'plugin',
+              }) as const,
+          ),
+        })
+        .catch(() => undefined)
+      if (plugins) {
+        unknown.forEach((pool, i) => {
+          const plugin = plugins[i]?.result
+          if (typeof plugin === 'string') {
+            pool.plugin = plugin
+          }
+        })
+      }
+    }
+
+    const feePools = pools.filter(
+      (pool) =>
+        typeof pool.plugin === 'string' &&
+        pool.plugin !== '0x0000000000000000000000000000000000000000',
+    )
+    if (feePools.length === 0) return
+
+    const fees = await this.client
+      .multicall({
+        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
+        allowFailure: true,
+        blockNumber,
+        contracts: feePools.map(
+          (pool) =>
+            ({
+              address: pool.plugin!,
+              chainId: this.chainId,
+              abi: getCurrentFeeAbi,
+              functionName: 'getCurrentFee',
+            }) as const,
+        ),
+      })
+      .catch(() => undefined)
+    if (!fees) return
+
+    feePools.forEach((pool, i) => {
+      const fee = fees[i]?.result
+      if (typeof fee === 'number') pool.fee = fee
+    })
+  }
+
   override async afterProcessLog(untilBlock: bigint) {
+    // refresh the dynamic fees of all cached pools, the fee for the next
+    // swap drifts with volatility even when no event fires
+    const pluginFeesPromise = this.updatePluginFees(
+      [...this.pools.values()],
+      untilBlock,
+    )
     const reservesPromise = this.getReserves(this.onSwapPluginFeeUpdatePools, {
       blockNumber: untilBlock,
     })
@@ -55,6 +173,7 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
     }
     const reserves = await reservesPromise
     const ticks = await ticksPromise
+    await pluginFeesPromise
     for (let i = 0; i < this.onSwapPluginFeeUpdatePools.length; i++) {
       const pool = this.onSwapPluginFeeUpdatePools[i]
       const reserve = reserves[i]
