@@ -705,6 +705,7 @@ export const WNATIVE = {
     symbol: 'WBERA',
     name: 'Wrapped Bera',
   }),
+  [ChainId.ROBINHOOD]: WETH9[ChainId.ROBINHOOD],
 } as const
 
 export const SUSHI = addressMapToTokenMap(
@@ -1260,4 +1261,21 @@ export const weETH = new Token({
   decimals: 18,
   symbol: 'weETH',
   name: 'Wrapped eETH',
+})
+
+// Global Dollar, the main stablecoin on Robinhood Chain
+export const USDG = new Token({
+  chainId: ChainId.ROBINHOOD,
+  address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+  decimals: 6,
+  symbol: 'USDG',
+  name: 'Global Dollar',
+})
+
+export const cbBTC = new Token({
+  chainId: ChainId.ROBINHOOD,
+  address: '0xCEC185eB182c47d1bA1EFc84e6959e18cd620Be4',
+  decimals: 8,
+  symbol: 'cbBTC',
+  name: 'Coinbase Wrapped BTC',
 })

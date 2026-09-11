@@ -565,6 +565,37 @@ export const berachain = {
   },
 } as const
 
+export const robinhood = {
+  id: ChainId.ROBINHOOD,
+  name: 'Robinhood Chain',
+  network: 'robinhood',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+    },
+    public: {
+      http: ['https://robinhood-rpc.publicnode.com'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Robinhood Chain Explorer',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+    etherscan: {
+      name: 'Robinhood Chain Explorer',
+      url: 'https://robinscan.io',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11' as Address,
+      blockCreated: 0,
+    },
+  },
+} as const
+
 export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.ARBITRUM_NOVA]: http(arbitrumNova.rpcUrls.default.http[0]),
   [ChainId.ARBITRUM]: http(arbitrum.rpcUrls.default.http[0]),
@@ -604,6 +635,7 @@ export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.BLAST]: http(blast.rpcUrls.default.http[0]),
   [ChainId.FLARE]: http(flare.rpcUrls.default.http[0]),
   [ChainId.BERA]: http(berachain.rpcUrls.default.http[0]),
+  [ChainId.ROBINHOOD]: http(robinhood.rpcUrls.default.http[0]),
   /* Testnets */ // TODO: add testnet transports
   [ChainId.ARBITRUM_TESTNET]: http(arbitrumSepolia.rpcUrls.default.http[0]),
   [ChainId.AVALANCHE_TESTNET]: http(avalancheFuji.rpcUrls.default.http[0]),
@@ -837,6 +869,10 @@ export const publicClientConfig = {
   [ChainId.BERA]: {
     chain: berachain as Chain,
     transport: publicTransports[ChainId.BERA],
+  },
+  [ChainId.ROBINHOOD]: {
+    chain: robinhood as Chain,
+    transport: publicTransports[ChainId.ROBINHOOD],
   },
 
   /* Testnets */
