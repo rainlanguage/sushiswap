@@ -73,6 +73,19 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
   DEFAULT_TICK_SPACING = 1
   gloablStateAbi = globalStateAbi
 
+  // true Algebra V1 forks (eg QuickSwap V3) compress their tick table by the
+  // tick spacing the same way univ3 does, so a table word covers
+  // tickSpacing * 256 raw ticks, while newer Algebra forks (Integral, and
+  // some V1 forks like Lynex V2) index the table by the raw tick
+  compressedTickTable = false
+
+  // tick table word index of the given tick, honoring compressedTickTable
+  tickWord(tick: number, tickSpacing: number): number {
+    return this.compressedTickTable
+      ? Math.floor(tick / tickSpacing / 256)
+      : bitmapIndex(tick, tickSpacing)
+  }
+
   poolDeployer: Record<number, Address> = {}
 
   constructor(
@@ -162,7 +175,8 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
         return
       }
       const fee = globalState[i]!.result?.[2] // fee
-      if (!fee) {
+      // zero is a valid fee, a plugin can set the base fee to 0
+      if (typeof fee !== 'number') {
         this.handleNullPool(poolAddress)
         return
       }
@@ -277,7 +291,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
    * Calculates and returns the list of current ticks for the given pool
    */
   override getMaxTickDiapason(tick: number, pool: RainV3Pool): CLTick[] {
-    const currentTickIndex = bitmapIndex(tick, pool.tickSpacing)
+    const currentTickIndex = this.tickWord(tick, pool.tickSpacing)
     if (!pool.ticks.has(currentTickIndex)) return []
     let minIndex
     let maxIndex
@@ -289,7 +303,10 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
     for (let i = minIndex + 1; i < maxIndex; ++i)
       poolTicks = poolTicks.concat(pool.ticks.get(i)!)
 
-    const lowerUnknownTick = (minIndex + 1) * 256 - 1
+    // raw ticks covered by one tick table word
+    const wordSpan = this.compressedTickTable ? pool.tickSpacing * 256 : 256
+    const tickStep = this.compressedTickTable ? pool.tickSpacing : 1
+    const lowerUnknownTick = (minIndex + 1) * wordSpan - tickStep
     console.assert(
       poolTicks.length === 0 || lowerUnknownTick < poolTicks[0]!.index,
       'Error 236: unexpected min tick index',
@@ -298,7 +315,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
       index: lowerUnknownTick,
       DLiquidity: 0n,
     })
-    const upperUnknownTick = maxIndex * 256
+    const upperUnknownTick = maxIndex * wordSpan
     console.assert(
       poolTicks[poolTicks.length - 1]!.index < upperUnknownTick,
       'Error 244: unexpected max tick index',
@@ -333,13 +350,13 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
 
   override getIndexes(existingPools: RainV3Pool[]): [number[], number[]] {
     const minIndexes = existingPools.map((pool) =>
-      bitmapIndex(
+      this.tickWord(
         pool.activeTick - NUMBER_OF_SURROUNDING_TICKS,
         pool.tickSpacing,
       ),
     )
     const maxIndexes = existingPools.map((pool) =>
-      bitmapIndex(
+      this.tickWord(
         pool.activeTick + NUMBER_OF_SURROUNDING_TICKS,
         pool.tickSpacing,
       ),
@@ -351,7 +368,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
    * Adds a new tick to the given pool's tick list
    */
   override addTick(tick: number, amount: bigint, pool: RainV3Pool) {
-    const tickWord = bitmapIndex(tick, pool.tickSpacing)
+    const tickWord = this.tickWord(tick, pool.tickSpacing)
     const ticks = pool.ticks.get(tickWord)
     if (ticks !== undefined) {
       if (ticks.length === 0 || tick < ticks[0]!.index) {
@@ -387,12 +404,12 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
    * takes place when afterProcessLog() is called
    */
   override onPoolTickChange(tick: number, pool: RainV3Pool): number[] {
-    const currentTickWord = bitmapIndex(tick, pool.tickSpacing)
-    const minWord = bitmapIndex(
+    const currentTickWord = this.tickWord(tick, pool.tickSpacing)
+    const minWord = this.tickWord(
       tick - NUMBER_OF_SURROUNDING_TICKS,
       pool.tickSpacing,
     )
-    const maxWord = bitmapIndex(
+    const maxWord = this.tickWord(
       tick + NUMBER_OF_SURROUNDING_TICKS,
       pool.tickSpacing,
     )
