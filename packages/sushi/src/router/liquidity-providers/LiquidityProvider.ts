@@ -93,6 +93,7 @@ export enum LiquidityProviders {
   NileV3 = 'NileV3',
   KodiakV2 = 'KodiakV2',
   KodiakV3 = 'KodiakV3',
+  UpV3 = 'UpV3',
 }
 
 export abstract class LiquidityProvider {
@@ -280,4 +281,5 @@ export const UniV3LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.NileV3,
   LiquidityProviders.KodiakV3,
   LiquidityProviders.Hydrex,
+  LiquidityProviders.UpV3,
 ]

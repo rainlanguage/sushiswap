@@ -12,6 +12,7 @@ export class UniswapV3Provider extends UniswapV3BaseProvider {
       [ChainId.OPTIMISM]: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
       [ChainId.BSC]: '0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7',
       [ChainId.BASE]: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+      [ChainId.ROBINHOOD]: '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
     } as const
     const initCodeHash = {
       [ChainId.ETHEREUM]:
@@ -26,6 +27,8 @@ export class UniswapV3Provider extends UniswapV3BaseProvider {
         '0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54',
       [ChainId.BASE]:
         '0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54',
+      [ChainId.ROBINHOOD]:
+        '0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54',
     } as const
     const tickLens = {
       [ChainId.ETHEREUM]: '0xbfd8137f7d1516d3ea5ca83523914859ec47f573',
@@ -34,6 +37,7 @@ export class UniswapV3Provider extends UniswapV3BaseProvider {
       [ChainId.OPTIMISM]: '0xbfd8137f7d1516d3ea5ca83523914859ec47f573',
       [ChainId.BSC]: '0xD9270014D396281579760619CCf4c3af0501A47C',
       [ChainId.BASE]: '0x0CdeE061c75D43c82520eD998C23ac2991c9ac6d',
+      [ChainId.ROBINHOOD]: '0x7DfD4F31be6814D2906BDE155c3e1B146EAc1468',
     } as const
     super(chainId, web3Client, factory, initCodeHash, tickLens)
   }
