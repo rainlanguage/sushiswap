@@ -117,10 +117,14 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
         return undefined
       })
 
+    // a failure of the whole multicall is an rpc problem, not proof that
+    // any pool is missing, so dont count null strikes, just retry later
+    if (!slot0) return []
+
     const existingPools: RainV3Pool[] = []
     staticPools.forEach((pool, i) => {
       const poolAddress = pool.address.toLowerCase()
-      if (slot0 === undefined || !slot0[i]) {
+      if (!slot0[i]) {
         this.handleNullPool(poolAddress)
         return
       }
