@@ -55,6 +55,7 @@ export const ChainId = {
   FLARE: 14,
   MATCHAIN: 698,
   BERA: 80094,
+  ROBINHOOD: 4663,
 } as const
 export type ChainId = (typeof ChainId)[keyof typeof ChainId]
 
@@ -136,5 +137,6 @@ export const ChainKey = {
   [ChainId.FLARE]: 'flare',
   [ChainId.MATCHAIN]: 'matchain',
   [ChainId.BERA]: 'berachain',
+  [ChainId.ROBINHOOD]: 'robinhood',
 } as const
 export type ChainKey = (typeof ChainKey)[keyof typeof ChainKey]

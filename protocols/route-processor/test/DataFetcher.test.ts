@@ -8,6 +8,7 @@ import {
   Type,
   USDB,
   USDC,
+  USDG,
   USDT,
   WNATIVE,
 } from 'sushi/currency'
@@ -417,6 +418,28 @@ async function runTest() {
             ),
           )
           await sleep(60_000)
+        }
+
+        // only for robinhood
+        if (chainId === ChainId.ROBINHOOD) {
+          allFoundPools.push(
+            await testDF(
+              chName,
+              dataFetcher,
+              WNATIVE[chainId],
+              USDG,
+              'WETH',
+              'USDG',
+            ),
+          )
+          const foundRoute = findRoute(
+            dataFetcher,
+            WNATIVE[chainId],
+            USDG,
+            chainId,
+          )
+          assert.ok(foundRoute)
+          foundRouteReports.push(foundRoute)
         }
 
         // shared pairs for all chains and dexes
