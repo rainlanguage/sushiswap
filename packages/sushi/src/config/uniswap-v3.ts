@@ -40,6 +40,7 @@ export const UNISWAP_V3_SUPPORTED_CHAIN_IDS = [
   ChainId.BASE,
   ChainId.MOONBEAM,
   ChainId.AVALANCHE,
+  ChainId.ROBINHOOD,
 ] as const
 
 export const UniswapV3ChainIds = UNISWAP_V3_SUPPORTED_CHAIN_IDS
@@ -64,6 +65,9 @@ export const UNISWAP_V3_INIT_CODE_HASH: Record<
   [ChainId.BASE]: POOL_INIT_CODE_HASH,
   [ChainId.MOONBEAM]: POOL_INIT_CODE_HASH,
   [ChainId.AVALANCHE]: POOL_INIT_CODE_HASH,
+  // Robinhood Chain runs a standard Uniswap V3 deployment behind a
+  // non-canonical factory address, so the pool init code hash is unchanged.
+  [ChainId.ROBINHOOD]: POOL_INIT_CODE_HASH,
 } as const
 
 export const UNISWAP_V3_FACTORY_ADDRESS: Record<
@@ -79,4 +83,5 @@ export const UNISWAP_V3_FACTORY_ADDRESS: Record<
   [ChainId.BASE]: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
   [ChainId.MOONBEAM]: '0x28f1158795A3585CaAA3cD6469CD65382b89BB70',
   [ChainId.AVALANCHE]: '0x740b1c1de25031C31FF4fC9A62f554A55cdC1baD',
+  [ChainId.ROBINHOOD]: '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
 } as const

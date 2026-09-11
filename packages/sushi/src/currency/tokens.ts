@@ -705,6 +705,13 @@ export const WNATIVE = {
     symbol: 'WBERA',
     name: 'Wrapped Bera',
   }),
+  [ChainId.ROBINHOOD]: new Token({
+    chainId: ChainId.ROBINHOOD,
+    address: WNATIVE_ADDRESS[ChainId.ROBINHOOD],
+    decimals: 18,
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+  }),
 } as const
 
 export const SUSHI = addressMapToTokenMap(
@@ -1252,6 +1259,14 @@ export const USDe = new Token({
   decimals: 18,
   symbol: 'USDe',
   name: 'USDe',
+})
+
+export const USDG = new Token({
+  chainId: ChainId.ROBINHOOD,
+  address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+  decimals: 6,
+  symbol: 'USDG',
+  name: 'Global Dollar',
 })
 
 export const weETH = new Token({

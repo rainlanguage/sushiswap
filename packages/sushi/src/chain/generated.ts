@@ -579,6 +579,23 @@ export default [
     shortName: 'tftm',
   },
   {
+    chainId: 4663,
+    explorers: [
+      {
+        name: 'Robinhood Chain Explorer',
+        url: 'https://robinhoodchain.blockscout.com',
+        standard: 'EIP3091',
+      },
+    ],
+    nativeCurrency: {
+      name: 'Ether',
+      symbol: 'ETH',
+      decimals: 18,
+    },
+    name: 'Robinhood Chain',
+    shortName: 'robinhood',
+  },
+  {
     chainId: 7000,
     explorers: [
       {

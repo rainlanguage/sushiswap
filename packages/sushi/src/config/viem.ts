@@ -565,6 +565,37 @@ export const berachain = {
   },
 } as const
 
+export const robinhood = {
+  id: ChainId.ROBINHOOD,
+  name: 'Robinhood Chain',
+  network: 'Robinhood Chain',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+    },
+    public: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+    },
+  },
+  blockExplorers: {
+    etherscan: {
+      name: 'Robinhood Chain Explorer',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+    default: {
+      name: 'Robinhood Chain Explorer',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11' as Address,
+      blockCreated: 0,
+    },
+  },
+} as const
+
 export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.ARBITRUM_NOVA]: http(arbitrumNova.rpcUrls.default.http[0]),
   [ChainId.ARBITRUM]: http(arbitrum.rpcUrls.default.http[0]),
@@ -612,6 +643,7 @@ export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.POLYGON_TESTNET]: http(polygonMumbai.rpcUrls.default.http[0]),
   [ChainId.SEPOLIA]: http(sepolia.rpcUrls.default.http[0]),
   [ChainId.MATCHAIN]: http(matchain.rpcUrls.default.http[0]),
+  [ChainId.ROBINHOOD]: http(robinhood.rpcUrls.default.http[0]),
 } as const satisfies Record<ChainId, Transport>
 
 export const publicChains = [
@@ -654,6 +686,7 @@ export const publicChains = [
   flare as Chain,
   matchain,
   berachain,
+  robinhood,
 
   /* Testnets */
   arbitrumSepolia as Chain,
@@ -863,6 +896,10 @@ export const publicClientConfig = {
   [ChainId.SEPOLIA]: {
     chain: sepolia as Chain,
     transport: publicTransports[ChainId.SEPOLIA],
+  },
+  [ChainId.ROBINHOOD]: {
+    chain: robinhood as Chain,
+    transport: publicTransports[ChainId.ROBINHOOD],
   },
 } as const satisfies Record<
   ChainId,

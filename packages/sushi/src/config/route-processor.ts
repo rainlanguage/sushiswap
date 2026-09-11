@@ -299,6 +299,7 @@ export const ROUTE_PROCESSOR_4_SUPPORTED_CHAIN_IDS = [
   ChainId.FLARE,
   ChainId.MATCHAIN,
   ChainId.BERA,
+  ChainId.ROBINHOOD,
 ] as const
 export type RouteProcessor4ChainId =
   (typeof ROUTE_PROCESSOR_4_SUPPORTED_CHAIN_IDS)[number]
@@ -340,6 +341,7 @@ export const ROUTE_PROCESSOR_4_ADDRESS: Record<
   [ChainId.FLARE]: '0x4Aa9AEf59C7B63CD5C4B2eDE81F65A4225a99d9d',
   [ChainId.MATCHAIN]: '0xbD8849759749B4d8506bC851aceF0E19F34EaBEE',
   [ChainId.BERA]: '0x', // needs deployment
+  [ChainId.ROBINHOOD]: '0x6E2d0e71d900474b262E545Bc4C98b71ab368d21',
 } as const
 export const isRouteProcessor4ChainId = (
   chainId: ChainId,
