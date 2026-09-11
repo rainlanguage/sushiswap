@@ -90,6 +90,7 @@ import { TridentProvider } from './liquidity-providers/Trident.js'
 import { UbeSwapProvider } from './liquidity-providers/UbeSwap.js'
 import { UniswapV2Provider } from './liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from './liquidity-providers/UniswapV3.js'
+import { UpV3Provider } from './liquidity-providers/UpV3Provider.js'
 import { VVSFlawlessProvider } from './liquidity-providers/VVSFlawless.js'
 import { VVSStandardProvider } from './liquidity-providers/VVSStandard.js'
 import { VelodromeSlipstreamProvider } from './liquidity-providers/VelodromeSlipstream.js'
@@ -272,6 +273,7 @@ export class DataFetcher {
       UbeSwapProvider,
       UniswapV2Provider,
       UniswapV3Provider,
+      UpV3Provider,
       VelodromeSlipstreamProvider,
       VVSStandardProvider,
       VVSFlawlessProvider,

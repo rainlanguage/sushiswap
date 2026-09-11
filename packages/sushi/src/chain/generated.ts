@@ -14,9 +14,8 @@ export default [
         standard: 'EIP3091',
       },
       {
-        name: 'dexguru',
-        url: 'https://ethereum.dex.guru',
-        icon: 'dexguru',
+        name: 'Routescan',
+        url: 'https://ethereum.routescan.io',
         standard: 'EIP3091',
       },
     ],
@@ -40,12 +39,6 @@ export default [
         name: 'blockscout',
         url: 'https://optimism.blockscout.com',
         icon: 'blockscout',
-        standard: 'EIP3091',
-      },
-      {
-        name: 'dexguru',
-        url: 'https://optimism.dex.guru',
-        icon: 'dexguru',
         standard: 'EIP3091',
       },
     ],
@@ -260,9 +253,8 @@ export default [
         standard: 'EIP3091',
       },
       {
-        name: 'dexguru',
-        url: 'https://polygon.dex.guru',
-        icon: 'dexguru',
+        name: 'oklink',
+        url: 'https://www.oklink.com/polygon',
         standard: 'EIP3091',
       },
     ],
@@ -579,11 +571,54 @@ export default [
     shortName: 'tftm',
   },
   {
+    chainId: 4663,
+    explorers: [
+      {
+        name: 'robinscan',
+        url: 'https://robinscan.io',
+        icon: 'robinscan',
+        standard: 'EIP3091',
+      },
+      {
+        name: 'blockscout',
+        url: 'https://robinhoodchain.blockscout.com',
+        icon: 'blockscout',
+        standard: 'EIP3091',
+      },
+      {
+        name: 'hoodscan',
+        url: 'https://hoodscan.co',
+        standard: 'EIP3091',
+      },
+      {
+        name: 'stonkscan',
+        url: 'https://stonkscan.io',
+        standard: 'EIP3091',
+      },
+    ],
+    nativeCurrency: {
+      name: 'Ether',
+      symbol: 'ETH',
+      decimals: 18,
+    },
+    name: 'Robinhood Chain',
+    shortName: 'robinhoodchain',
+    parent: {
+      type: 'L2',
+      chain: 'eip155-1',
+      bridges: [
+        {
+          url: 'https://portal.arbitrum.io/bridge?destinationChain=robinhood-chain&sourceChain=ethereum',
+        },
+      ],
+    },
+  },
+  {
     chainId: 7000,
     explorers: [
       {
-        name: 'ZetaChain Mainnet Explorer',
-        url: 'https://explorer.zetachain.com',
+        name: 'ZetaScan',
+        url: 'https://zetascan.com',
         standard: 'none',
       },
     ],
@@ -687,12 +722,6 @@ export default [
         icon: 'blockscout',
         standard: 'EIP3091',
       },
-      {
-        name: 'dexguru',
-        url: 'https://nova.dex.guru',
-        icon: 'dexguru',
-        standard: 'EIP3091',
-      },
     ],
     nativeCurrency: {
       name: 'Ether',
@@ -721,8 +750,8 @@ export default [
       },
       {
         name: 'blockscout',
-        url: 'https://explorer.celo.org',
-        standard: 'none',
+        url: 'https://celo.blockscout.com',
+        standard: 'EIP3091',
       },
     ],
     nativeCurrency: {
@@ -732,6 +761,15 @@ export default [
     },
     name: 'Celo Mainnet',
     shortName: 'celo',
+    parent: {
+      type: 'L2',
+      chain: 'eip155-1',
+      bridges: [
+        {
+          url: 'https://superbridge.app/celo',
+        },
+      ],
+    },
   },
   {
     chainId: 43113,
@@ -744,6 +782,11 @@ export default [
       {
         name: 'Routescan',
         url: 'https://testnet.snowtrace.io',
+        standard: 'EIP3091',
+      },
+      {
+        name: 'Avascan',
+        url: 'https://testnet.avascan.info',
         standard: 'EIP3091',
       },
     ],
@@ -885,13 +928,8 @@ export default [
     chainId: 80094,
     explorers: [
       {
-        name: 'Berascan',
+        name: 'Berascan Berachain Block Explorer',
         url: 'https://berascan.com',
-        standard: 'EIP3091',
-      },
-      {
-        name: 'Beratrail',
-        url: 'https://beratrail.io',
         standard: 'EIP3091',
       },
     ],
@@ -1001,13 +1039,18 @@ export default [
         url: 'https://sepolia.otterscan.io',
         standard: 'EIP3091',
       },
+      {
+        name: 'Routescan',
+        url: 'https://11155111.testnet.routescan.io',
+        standard: 'EIP3091',
+      },
     ],
     nativeCurrency: {
       name: 'Sepolia Ether',
       symbol: 'ETH',
       decimals: 18,
     },
-    name: 'Sepolia',
+    name: 'Ethereum Sepolia',
     shortName: 'sep',
   },
   {
