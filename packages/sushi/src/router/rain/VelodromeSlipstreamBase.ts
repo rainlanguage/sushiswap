@@ -26,22 +26,52 @@ import {
 
 export const ZERO_FEE_INDICATOR = 420
 
+/**
+ * Classification of a pool's base fee on the swap fee module
+ * - Default: no custom fee set, the factory's tickSpacingToFee applies
+ * - Dynamic: a custom (per pool) base fee is set on the module
+ * - Zero: the module holds ZERO_FEE_INDICATOR, the pool charges no fee
+ */
 export enum FeeType {
   Default = 0,
   Dynamic = 1,
   Zero = 2,
 }
 
+/**
+ * Per pool fee settings as held by the swap fee module.
+ * The plain CustomSwapFeeModule only has baseFee (its customFee mapping),
+ * the DynamicSwapFeeModule versions add the rest, see
+ * VelodromeSlipstreamDynamicFeeBase.ts
+ */
+export interface SlipstreamFeeConfig {
+  baseFee: number
+  feeCap: number
+  scalingFactor: bigint
+  initialFeeEnabled: boolean
+  initialFee: number
+}
+
+export const DEFAULT_FEE_CONFIG: SlipstreamFeeConfig = {
+  baseFee: 0,
+  feeCap: 0,
+  scalingFactor: 0n,
+  initialFeeEnabled: false,
+  initialFee: 0,
+}
+
 export interface StaticSlipstreamPool extends StaticPoolUniV3 {
   tickSpacing: number
   feeType: FeeType
+  feeConfig: SlipstreamFeeConfig
 }
 
 export interface SlipstreamPool extends RainV3Pool {
   feeType: FeeType
+  feeConfig: SlipstreamFeeConfig
 }
 
-const feeAbi = [
+export const feeAbi = [
   {
     inputs: [],
     name: 'fee',
@@ -86,7 +116,7 @@ export const customFeeAbi = [
   },
 ] as const
 
-const SlipstreamEventsAbi = [
+export const SlipstreamEventsAbi = [
   ...UniV3EventsAbi.slice(0, -1), // univ3 shared events except PoolCreated
   parseAbiItem(
     'event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool)',
@@ -95,11 +125,24 @@ const SlipstreamEventsAbi = [
     'event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee)',
   ),
   parseAbiItem('event CustomFeeSet(address indexed pool, uint24 indexed fee)'),
+  // pre nov 2024 name of CustomFeeSet, still emitted by older deployed
+  // custom fee modules (eg aerodrome factory 0x9592... on base)
+  parseAbiItem('event SetCustomFee(address indexed pool, uint24 indexed fee)'),
   parseAbiItem(
     'event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule)',
   ),
 ]
 
+/**
+ * Base provider for slipstream CL factories whose swapFeeModule is the plain
+ * CustomSwapFeeModule: a pool's fee is either its customFee on the module,
+ * zero (ZERO_FEE_INDICATOR) or the factory's tickSpacingToFee. All of these
+ * only change through events (CustomFeeSet, TickSpacingEnabled,
+ * SwapFeeModuleChanged), so no per round rpc reads are needed.
+ *
+ * Factories whose module is a DynamicSwapFeeModule need the child providers
+ * in VelodromeSlipstreamDynamicFeeBase.ts
+ */
 export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvider {
   readonly BASE_FEE = 100
   DEFAULT_TICK_SPACINGS = [1, 50, 100, 200, 2000] as const
@@ -268,8 +311,170 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
           }
         }
       }
+      if (!(await this.initFeeModule(blockNumber))) return
       this.initialized = true
     }
+  }
+
+  /**
+   * Hook for child providers to read extra state from the swap fee module
+   * at init (and again after a SwapFeeModuleChanged). Returns false on
+   * failure, which aborts init so it gets retried
+   */
+  protected async initFeeModule(blockNumber?: bigint): Promise<boolean> {
+    // this provider models the plain CustomSwapFeeModule, a
+    // DynamicSwapFeeModule also answers customFee() (with its base fee
+    // only) so a wrong module version would go unnoticed, probe for it
+    const secondsAgo = await this.client
+      .readContract({
+        address: this.swapFeeModule[this.chainId]!,
+        blockNumber,
+        abi: [
+          {
+            inputs: [],
+            name: 'secondsAgo',
+            outputs: [{ internalType: 'uint32', name: '', type: 'uint32' }],
+            stateMutability: 'view',
+            type: 'function',
+          },
+        ] as const,
+        functionName: 'secondsAgo',
+      })
+      .catch(() => undefined)
+    if (typeof secondsAgo === 'number') {
+      console.warn(
+        `${this.getLogPrefix()} - INIT: swapFeeModule ${
+          this.swapFeeModule[this.chainId]
+        } looks like a DynamicSwapFeeModule but this provider models the CustomSwapFeeModule, pool fees may be wrong`,
+      )
+    }
+    return true
+  }
+
+  /**
+   * Reads the fee settings of the given pools from the swap fee module.
+   * Returns undefined when the whole read failed (rpc problem), otherwise
+   * one entry per pool, undefined for the pools whose read failed
+   */
+  protected async readFeeConfigs(
+    pools: { address: Address }[],
+    blockNumber?: bigint,
+  ): Promise<(SlipstreamFeeConfig | undefined)[] | undefined> {
+    if (!pools.length) return []
+    const results = await this.client
+      .multicall({
+        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
+        allowFailure: true,
+        blockNumber,
+        contracts: pools.map((pool) => ({
+          address: this.swapFeeModule[this.chainId]!,
+          chainId: this.chainId,
+          abi: customFeeAbi,
+          functionName: 'customFee',
+          args: [pool.address],
+        })),
+      })
+      .catch((e) => {
+        console.warn(
+          `${this.getLogPrefix()} - multicall failed to get customFee, message: ${
+            e.message
+          }`,
+        )
+        return undefined
+      })
+    if (!results) return undefined
+    return results.map((res) => {
+      const baseFee = res?.result
+      if (typeof baseFee !== 'number') return undefined
+      return { ...DEFAULT_FEE_CONFIG, baseFee }
+    })
+  }
+
+  /**
+   * Whether the pool's fee depends on state that changes without any event
+   * (eg the dynamic fee module's tick vs twap tick term), such pools get
+   * their fee() re-read on every update round. Never the case for the
+   * plain custom fee module
+   */
+  protected isVolatile(_pool: { feeConfig: SlipstreamFeeConfig }): boolean {
+    return false
+  }
+
+  protected classifyBaseFee(baseFee: number): FeeType {
+    if (baseFee === ZERO_FEE_INDICATOR) return FeeType.Zero
+    if (baseFee === 0) return FeeType.Default
+    return FeeType.Dynamic
+  }
+
+  protected applyFeeConfig(
+    pool: { feeType: FeeType; feeConfig: SlipstreamFeeConfig },
+    config: SlipstreamFeeConfig,
+  ) {
+    pool.feeConfig = config
+    pool.feeType = this.classifyBaseFee(config.baseFee)
+  }
+
+  /**
+   * Resolves the fee of a non volatile pool from its fee settings, ie the
+   * part of the fee that only changes through events
+   */
+  protected resolveStaticFee(pool: {
+    tickSpacing: number
+    feeType: FeeType
+    feeConfig: SlipstreamFeeConfig
+  }): number | undefined {
+    if (pool.feeType === FeeType.Zero) return 0
+    if (pool.feeType === FeeType.Dynamic) return pool.feeConfig.baseFee
+    return this.spacingFeeMap[pool.tickSpacing]
+  }
+
+  /**
+   * Re-resolves the fee of a cached pool from its fee settings, no-op for
+   * volatile pools since those get their fee re-read from chain
+   */
+  protected refreshStaticFee(pool: SlipstreamPool) {
+    if (this.isVolatile(pool)) return
+    const fee = this.resolveStaticFee(pool)
+    if (typeof fee === 'number') pool.fee = fee
+  }
+
+  /**
+   * Reads the current fee() of the given pools, returns undefined when the
+   * whole read failed, otherwise one entry per pool
+   */
+  protected async readPoolFees(
+    pools: { address: Address }[],
+    blockNumber?: bigint,
+  ): Promise<(number | undefined)[] | undefined> {
+    if (!pools.length) return []
+    const results = await this.client
+      .multicall({
+        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
+        allowFailure: true,
+        blockNumber,
+        contracts: pools.map(
+          (pool) =>
+            ({
+              address: pool.address,
+              chainId: this.chainId,
+              abi: feeAbi,
+              functionName: 'fee',
+            }) as const,
+        ),
+      })
+      .catch((e) => {
+        console.warn(
+          `${this.getLogPrefix()} - multicall failed to get pool fees, message: ${
+            e.message
+          }`,
+        )
+        return undefined
+      })
+    if (!results) return undefined
+    return results.map((res) => {
+      const fee = res?.result
+      return typeof fee === 'number' ? fee : undefined
+    })
   }
 
   override async fetchPoolData(
@@ -300,97 +505,38 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
     }
     if (staticPools.length === 0) return []
 
-    const slot0 = await this.client
-      .multicall({
-        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
-        allowFailure: true,
-        blockNumber: options?.blockNumber,
-        contracts: staticPools.map((pool) => ({
-          address: pool.address,
-          chainId: this.chainId,
-          abi: slot0Abi,
-          functionName: 'slot0',
-        })),
-      })
-      .catch((e) => {
-        console.warn(
-          `${this.getLogPrefix()} - INIT: multicall failed, message: ${
-            e.message
-          }`,
-        )
-        return undefined
-      })
+    // the pools state (slot0) and their fee settings on the swap fee module
+    // are independent reads, so they go out together. the fee settings of
+    // a non existent pool come back as zeros and are simply not used
+    const [slot0, feeConfigs] = await Promise.all([
+      this.client
+        .multicall({
+          multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
+          allowFailure: true,
+          blockNumber: options?.blockNumber,
+          contracts: staticPools.map((pool) => ({
+            address: pool.address,
+            chainId: this.chainId,
+            abi: slot0Abi,
+            functionName: 'slot0',
+          })),
+        })
+        .catch((e) => {
+          console.warn(
+            `${this.getLogPrefix()} - INIT: multicall failed, message: ${
+              e.message
+            }`,
+          )
+          return undefined
+        }),
+      this.readFeeConfigs(staticPools, options?.blockNumber),
+    ])
     // a failure of the whole multicall is an rpc problem, not proof that
     // any pool is missing, so dont count null strikes, just retry later
     if (!slot0) return []
 
-    const feeTypes = await this.client
-      .multicall({
-        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
-        allowFailure: true,
-        blockNumber: options?.blockNumber,
-        contracts: staticPools.map((pool) => ({
-          address: this.swapFeeModule[this.chainId]!,
-          chainId: this.chainId,
-          abi: customFeeAbi,
-          functionName: 'customFee',
-          args: [pool.address],
-        })),
-      })
-      .catch((e) => {
-        console.warn(
-          `${this.getLogPrefix()} - INIT: multicall failed, message: ${
-            e.message
-          }`,
-        )
-        return undefined
-      })
-    staticPools.forEach((pool, i) => {
-      const result = feeTypes?.[i]?.result
-      if (typeof result === 'number') {
-        if (result === 0) pool.feeType = FeeType.Default
-        else if (result === ZERO_FEE_INDICATOR) pool.feeType = FeeType.Zero
-        else pool.feeType = FeeType.Dynamic
-      }
-    })
-
-    // get pool fees for dynamic fee type pools
-    const dynamicPools = staticPools.filter(
-      (pool) => pool.feeType === FeeType.Dynamic,
-    )
-    const poolFees = await this.client
-      .multicall({
-        multicallAddress: this.client.chain?.contracts?.multicall3?.address!,
-        allowFailure: true,
-        blockNumber: options?.blockNumber,
-        contracts: dynamicPools.map(
-          (pool) =>
-            ({
-              address: pool.address,
-              chainId: this.chainId,
-              abi: feeAbi,
-              functionName: 'fee',
-            }) as const,
-        ),
-      })
-      .catch((e) => {
-        console.warn(
-          `${this.getLogPrefix()} - INIT: multicall failed, message: ${
-            e.message
-          }`,
-        )
-        return undefined
-      })
-    // fees keyed by pool address, index based consumption would misalign
-    // as soon as one dynamic pool gets skipped for a bad slot0
-    const dynamicPoolFees = new Map<string, number>()
-    dynamicPools.forEach((pool, i) => {
-      const fee = poolFees?.[i]?.result
-      if (typeof fee === 'number')
-        dynamicPoolFees.set(pool.address.toLowerCase(), fee)
-    })
-
-    const existingPools: SlipstreamPool[] = []
+    // keep only the pools that exist, null strike the rest
+    const existing: [StaticSlipstreamPool, bigint, number, number][] = []
     staticPools.forEach((pool, i) => {
       const poolAddress = pool.address.toLowerCase()
       if (!slot0[i]) {
@@ -403,27 +549,47 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         this.handleNullPool(poolAddress)
         return
       }
+      existing.push([pool, sqrtPriceX96, tick, i])
+    })
+    if (!existing.length) return []
+
+    // the pools exist (slot0 succeeded), only their fees could not be
+    // resolved, so skip them for this round without a null strike
+    if (!feeConfigs) return []
+    existing.forEach(([pool, , , i]) => {
+      const config = feeConfigs[i]
+      if (config) this.applyFeeConfig(pool, config)
+    })
+    const resolved = existing.filter(([, , , i]) => feeConfigs[i] !== undefined)
+
+    // pools with a volatile fee need their current fee() read from chain,
+    // keyed by address since index based consumption would misalign as
+    // soon as one pool gets skipped
+    const volatilePools = resolved
+      .map(([pool]) => pool)
+      .filter((pool) => this.isVolatile(pool))
+    const volatileFees = new Map<string, number>()
+    if (volatilePools.length) {
+      const fees = await this.readPoolFees(volatilePools, options?.blockNumber)
+      volatilePools.forEach((pool, i) => {
+        const fee = fees?.[i]
+        if (typeof fee === 'number')
+          volatileFees.set(pool.address.toLowerCase(), fee)
+      })
+    }
+
+    const existingPools: SlipstreamPool[] = []
+    resolved.forEach(([pool, sqrtPriceX96, tick]) => {
+      const poolAddress = pool.address.toLowerCase()
       const activeTick = Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
       if (typeof activeTick !== 'number') {
         this.handleNullPool(poolAddress)
         return
       }
-      const fee = (() => {
-        if (pool.feeType === FeeType.Zero) {
-          return 0
-        } else if (pool.feeType === FeeType.Default) {
-          return this.spacingFeeMap[pool.tickSpacing]!
-        } else if (pool.feeType === FeeType.Dynamic) {
-          return dynamicPoolFees.get(poolAddress)
-        } else {
-          return this.spacingFeeMap[pool.tickSpacing]!
-        }
-      })()
-      if (typeof fee !== 'number') {
-        // the pool exists (its slot0 read succeeded), only its fee could
-        // not be resolved, so skip it for this round without a null strike
-        return
-      }
+      const fee = this.isVolatile(pool)
+        ? volatileFees.get(poolAddress)
+        : this.resolveStaticFee(pool)
+      if (typeof fee !== 'number') return
 
       existingPools.push({
         ...pool,
@@ -436,6 +602,7 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         liquidity: 0n,
         blockNumber: options?.blockNumber ?? 0n,
         feeType: pool.feeType,
+        feeConfig: pool.feeConfig,
         tick,
       })
     })
@@ -455,7 +622,7 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
       try {
         const event = parseEventLogs({
           logs: [log],
-          abi: SlipstreamEventsAbi,
+          abi: this.eventsAbi as typeof SlipstreamEventsAbi,
         })[0]!
         switch (event.eventName) {
           case 'PoolCreated': {
@@ -472,25 +639,19 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
             this.spacingFeeMap[event.args.tickSpacing] = event.args.fee
             break
           }
-          case 'CustomFeeSet': {
-            // pool fee update
+          case 'CustomFeeSet':
+          case 'SetCustomFee': {
+            // pool base fee update
             const pool = this.pools.get(
               event.args.pool.toLowerCase(),
             ) as SlipstreamPool
-            if (pool) {
-              if (log.blockNumber! >= pool.blockNumber) {
-                pool.blockNumber = log.blockNumber!
-                if (event.args.fee === ZERO_FEE_INDICATOR) {
-                  pool.fee = 0
-                  pool.feeType = FeeType.Zero
-                } else if (event.args.fee !== 0) {
-                  pool.fee = event.args.fee
-                  pool.feeType = FeeType.Dynamic
-                } else {
-                  pool.fee = this.spacingFeeMap[pool.tickSpacing]!
-                  pool.feeType = FeeType.Default
-                }
-              }
+            if (pool && log.blockNumber! >= pool.blockNumber) {
+              pool.blockNumber = log.blockNumber!
+              this.applyFeeConfig(pool, {
+                ...pool.feeConfig,
+                baseFee: event.args.fee,
+              })
+              this.refreshStaticFee(pool)
             }
             break
           }
@@ -508,108 +669,56 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
             }
             break
           }
-          default:
+          default: {
+            this.otherFactoryEventCases(log, event)
+          }
         }
       } catch {}
     }
     return false
   }
 
-  override async afterProcessLog(untilBlock: bigint) {
-    let pools: SlipstreamPool[] = []
-    let shouldResetFees = false
-    if (this.shouldResetFees) {
-      shouldResetFees = true
-      this.shouldResetFees = false
-    }
-    this.pools.forEach((pool) => {
-      if (shouldResetFees) {
-        pools.push(pool as SlipstreamPool)
-      } else {
-        if ((pool as SlipstreamPool).feeType === FeeType.Dynamic) {
-          pools.push(pool as SlipstreamPool)
-        }
-      }
-    })
+  // for child providers that have other factory/fee module events to handle
+  protected otherFactoryEventCases(_log: Log, _event: any) {}
 
-    let [_, poolFees] = await Promise.allSettled([
+  override async afterProcessLog(untilBlock: bigint) {
+    const shouldResetFees = this.shouldResetFees
+    this.shouldResetFees = false
+    const pools = Array.from(this.pools.values()) as SlipstreamPool[]
+
+    await Promise.allSettled([
       // base after log process
       super.afterProcessLog(untilBlock),
-      // get pool new fees
-      shouldResetFees
-        ? this.client.multicall({
-            multicallAddress:
-              this.client.chain?.contracts?.multicall3?.address!,
-            allowFailure: true,
-            blockNumber: untilBlock,
-            contracts: pools.map((pool) => ({
-              address: this.swapFeeModule[this.chainId]!,
-              chainId: this.chainId,
-              abi: customFeeAbi,
-              functionName: 'customFee',
-              args: [pool.address],
-            })),
-          })
-        : this.client.multicall({
-            multicallAddress:
-              this.client.chain?.contracts?.multicall3?.address!,
-            allowFailure: true,
-            blockNumber: untilBlock,
-            contracts: pools.map((pool) => ({
-              address: pool.address,
-              chainId: this.chainId,
-              abi: feeAbi,
-              functionName: 'fee',
-            })),
-          }),
-    ])
-
-    // handle pool fees
-    if (poolFees.status === 'fulfilled') {
-      if (shouldResetFees) {
-        const newDynamicPools: SlipstreamPool[] = []
-        pools.forEach((pool, i) => {
-          const result = (poolFees as any).value?.[i]?.result
-          if (typeof result === 'number') {
-            if (result === 0) {
-              pool.feeType = FeeType.Default
-              const spacingFee = this.spacingFeeMap[pool.tickSpacing]
-              if (typeof spacingFee === 'number') pool.fee = spacingFee
-            } else if (result === ZERO_FEE_INDICATOR) {
-              pool.feeType = FeeType.Zero
-              pool.fee = 0
-            } else {
-              pool.feeType = FeeType.Dynamic
-              newDynamicPools.push(pool)
-            }
+      (async () => {
+        if (shouldResetFees) {
+          // swap fee module changed, re-read the module state and every
+          // pool's fee settings, both only need the new module address
+          const [moduleOk, configs] = await Promise.all([
+            this.initFeeModule(untilBlock),
+            this.readFeeConfigs(pools, untilBlock),
+          ])
+          if (moduleOk && configs) {
+            pools.forEach((pool, i) => {
+              const config = configs[i]
+              if (!config) return
+              this.applyFeeConfig(pool, config)
+              this.refreshStaticFee(pool)
+            })
+          } else {
+            // if failed, we'll try again on next update
+            this.shouldResetFees = true
           }
+        }
+        // volatile pools get their fee re-read every round, on failure
+        // they keep their previous fee until the next round
+        const volatilePools = pools.filter((pool) => this.isVolatile(pool))
+        const fees = await this.readPoolFees(volatilePools, untilBlock)
+        volatilePools.forEach((pool, i) => {
+          const fee = fees?.[i]
+          if (typeof fee === 'number') pool.fee = fee
         })
-        pools = newDynamicPools
-        ;[poolFees] = await Promise.allSettled([
-          this.client.multicall({
-            multicallAddress:
-              this.client.chain?.contracts?.multicall3?.address!,
-            allowFailure: true,
-            blockNumber: untilBlock,
-            contracts: pools.map((pool) => ({
-              address: pool.address,
-              chainId: this.chainId,
-              abi: feeAbi,
-              functionName: 'fee',
-            })),
-          }),
-        ])
-      }
-    }
-    if (poolFees.status === 'fulfilled') {
-      pools.forEach((pool, i) => {
-        const fee = (poolFees as any).value?.[i]?.result
-        if (typeof fee === 'number') pool.fee = fee
-      })
-    } else {
-      // if failed to update pool fees, we'll try again on next update
-      this.shouldResetFees = true
-    }
+      })(),
+    ])
   }
 
   override getStaticPools(t1: Token, t2: Token): StaticSlipstreamPool[] {
@@ -642,10 +751,11 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
       fee: this.BASE_FEE,
       tickSpacing,
       feeType: FeeType.Default,
+      feeConfig: { ...DEFAULT_FEE_CONFIG },
     }))
   }
 
-  // algebra doesnt have the fee/ticks setup the same way univ3 has
+  // slipstream doesnt have the fee/ticks setup the same way univ3 has
   override async ensureFeeAndTicks(): Promise<boolean> {
     return true
   }

@@ -28,7 +28,8 @@ describe('RainDataFetcher tests', async () => {
     univ3: LiquidityProviders.UniswapV3, // Univ3
     algebraV1: LiquidityProviders.KimV4, // Algebra Integral v1/v1.1
     slipstream: LiquidityProviders.AerodromeSlipstream, // Slipstream
-    slipstream2: LiquidityProviders.AerodromeSlipstreamV2_2, // Slipstream v2.2
+    slipstreamv2: LiquidityProviders.AerodromeSlipstreamV2, // SlipstreamV2.0
+    slipstreamv2_2: LiquidityProviders.AerodromeSlipstreamV2_2, // Slipstream v2.2
     algebraV1_2: LiquidityProviders.Hydrex, // Algebra Integral V1.2/v1.2.1
   }
 
@@ -89,9 +90,22 @@ describe('RainDataFetcher tests', async () => {
     )
   })
 
+  it('should correctly update pools data by logs for SlipstreamV2 protocol', async () => {
+    await testRainDataFetcher(
+      [protocols.slipstreamv2],
+      client,
+      fromToken,
+      toToken,
+      amountIn,
+      gasPrice,
+      currentBlockNumber,
+      oldBlockNumber,
+    )
+  })
+
   it('should correctly update pools data by logs for SlipstreamV2_2 protocol', async () => {
     await testRainDataFetcher(
-      [protocols.slipstream2],
+      [protocols.slipstreamv2_2],
       client,
       fromToken,
       toToken,

@@ -299,6 +299,8 @@ export class RainDataFetcher extends DataFetcher {
   async updatePools(untilBlock?: bigint): Promise<boolean> {
     let fromBlock = -1n
     const poolAddresses: string[] = []
+    // a pool's blockNumber is the block whose state its cached data reflects
+    const poolStateBlocks = new Map<string, bigint>()
     const addresses: string[] = [...this.factories]
     if (typeof untilBlock !== 'bigint') {
       untilBlock = await this.web3Client.getBlockNumber()
@@ -313,6 +315,7 @@ export class RainDataFetcher extends DataFetcher {
         const pools = provider.pools
         pools.forEach((pool, address) => {
           poolAddresses.push(address)
+          poolStateBlocks.set(address, pool.blockNumber)
           if (fromBlock === -1n) {
             fromBlock = pool.blockNumber
           }
@@ -332,8 +335,10 @@ export class RainDataFetcher extends DataFetcher {
       }
     })
     if (fromBlock === -1n) return false
-    if (fromBlock === untilBlock) return false
-    if (fromBlock > untilBlock) {
+    // the cached state already includes the logs of fromBlock itself, so
+    // there is nothing new until the block after it
+    if (fromBlock >= untilBlock) {
+      // when fromBlock > untilBlock:
       // throw [
       //   'pools data are cached at higher block height than the requested block height',
       //   'if you wish to get pools data at your requested block height',
@@ -347,26 +352,22 @@ export class RainDataFetcher extends DataFetcher {
     if (!poolAddresses.length) return false
     addresses.push(...poolAddresses)
 
-    // get logs in slices of 5 blocks to follow paging instructions from standard evm rpc specs
-    let fromBlockSlice = fromBlock
-    const logsPromises = []
-    const blockNumberSlices = []
-    while (fromBlockSlice < untilBlock) {
-      let toBlock = untilBlock + 1n
-      if (fromBlockSlice + 100n < untilBlock) {
-        toBlock = fromBlockSlice + 100n
-      }
-      blockNumberSlices.push(toBlock)
-      logsPromises.push(
-        this.web3Client.getLogs({
-          events: this.eventsAbi,
-          address: addresses as `0x${string}`[],
-          fromBlock: fromBlockSlice,
-          toBlock: toBlock - 1n,
-        }),
-      )
-      fromBlockSlice += 100n
+    // get logs of (fromBlock, untilBlock] in inclusive slices of 1000 blocks
+    // to follow paging instructions from standard evm rpc specs
+    const slices: { from: bigint; to: bigint }[] = []
+    for (let from = fromBlock + 1n; from <= untilBlock; ) {
+      const to = from + 999n < untilBlock ? from + 999n : untilBlock
+      slices.push({ from, to })
+      from = to + 1n
     }
+    const logsPromises = slices.map((slice) =>
+      this.web3Client.getLogs({
+        events: this.eventsAbi,
+        address: addresses as `0x${string}`[],
+        fromBlock: slice.from,
+        toBlock: slice.to,
+      }),
+    )
 
     // await logs and sort them from earliest block to latest
     const logsResults = await Promise.allSettled(logsPromises)
@@ -385,11 +386,14 @@ export class RainDataFetcher extends DataFetcher {
       const res = logsResults[i]
       if (res && res.status === 'fulfilled') {
         logs.push(...res.value)
-        if (typeof blockNumberSlices[i] === 'bigint') {
-          untilBlock = blockNumberSlices[i]
-        }
+        // the pools state advances to the last block whose logs we have
+        untilBlock = slices[i]!.to
       } else {
-        break // if any one of the logs request fails, break out of the loop to avoid missing logs
+        // if any one of the logs request fails, stop at the previous slice
+        // to avoid missing logs, if the first slice failed there is nothing
+        // to apply and the pools stay at their current block
+        if (i === 0) return false
+        break
       }
     }
     logs.sort((a, b) => {
@@ -409,6 +413,15 @@ export class RainDataFetcher extends DataFetcher {
     // process each log for each provider
     let isNewPoolCreated = false
     logs.forEach((log) => {
+      // pools can be cached at different blocks, a pool's own logs at or
+      // before its state block are already reflected in its cached data
+      const stateBlock = poolStateBlocks.get(log.address.toLowerCase())
+      if (
+        stateBlock !== undefined &&
+        log.blockNumber !== null &&
+        log.blockNumber <= stateBlock
+      )
+        return
       this.providers.forEach((p) => {
         if (p.processLog(log)) isNewPoolCreated = true
       })
