@@ -3,7 +3,7 @@ import { ChainId } from '../../chain/index.js'
 import { CLTick } from '../../tines/index.js'
 import { RainDataFetcherOptions } from '../rain/RainDataFetcher.js'
 import { RainV3Pool } from '../rain/UniswapV3Base.js'
-import { VelodromeSlipstreamBaseProvider } from '../rain/VelodromeSlipstreamBase.js'
+import { VelodromeSlipstreamDynamicFeeV2BaseProvider } from '../rain/VelodromeSlipstreamDynamicFeeBase.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 import { bitmapIndex } from './UniswapV3Base.js'
 
@@ -43,12 +43,16 @@ const SUGAR_HELPER_BITMAPS = 5
 /**
  * Up Exchange v3 on Robinhood Chain, an aerodrome slipstream CL fork.
  *
+ * Its swap fee module is the DynamicSwapFeeModule version with the initial
+ * fee patch (5 word dynamicFeeConfig), built to emit the legacy
+ * SetCustomFee event name, which the base events abi covers.
+ *
  * The protocol did not deploy a TickLens, and the uniswap v3 TickLens on the
  * chain cannot decode slipstream's ticks() (it has 2 extra fields). The
  * slipstream SugarHelper's getPopulatedTicks() is used as the lens instead,
  * it covers 5 bitmap words per call
  */
-export class UpV3Provider extends VelodromeSlipstreamBaseProvider {
+export class UpV3Provider extends VelodromeSlipstreamDynamicFeeV2BaseProvider {
   override DEFAULT_TICK_SPACINGS = [1, 50, 100, 200, 2000, 10, 60] as any
   override tickSpacings: number[] = [...this.DEFAULT_TICK_SPACINGS]
   constructor(chainId: ChainId, web3Client: PublicClient) {
