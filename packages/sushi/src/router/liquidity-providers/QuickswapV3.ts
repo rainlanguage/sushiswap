@@ -4,6 +4,9 @@ import { AlgebraV1BaseProvider } from '../rain/AlgebraV1Base.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 
 export class QuickSwapV3Provider extends AlgebraV1BaseProvider {
+  // QuickSwap V3 is a true Algebra V1, its tick table words are
+  // compressed by the tick spacing
+  override compressedTickTable = true
   constructor(chainId: ChainId, web3Client: PublicClient) {
     const factory = {
       [ChainId.POLYGON]: '0x411b0fAcC3489691f28ad58c47006AF5E3Ab3A28',
