@@ -155,12 +155,16 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
         return undefined
       })
 
+    // a failure of the whole multicall is an rpc problem, not proof that
+    // any pool is missing, so dont count null strikes, just retry later
+    if (!globalState) return []
+
     const tickSpacings = await this.getTickSpacing(staticPools, options)
 
     const existingPools: RainV3Pool[] = []
     staticPools.forEach((pool, i) => {
       const poolAddress = pool.address.toLowerCase()
-      if (globalState === undefined || !globalState[i]) {
+      if (!globalState[i]) {
         this.handleNullPool(poolAddress)
         return
       }
