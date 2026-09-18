@@ -88,7 +88,10 @@ import { UniswapV3Provider } from '../liquidity-providers/UniswapV3.js'
 import { UpV3Provider } from '../liquidity-providers/UpV3Provider.js'
 import { VVSFlawlessProvider } from '../liquidity-providers/VVSFlawless.js'
 import { VVSStandardProvider } from '../liquidity-providers/VVSStandard.js'
-import { VelodromeSlipstreamProvider } from '../liquidity-providers/VelodromeSlipstream.js'
+import {
+  VelodromeSlipstreamProvider,
+  VelodromeSlipstreamV2Provider,
+} from '../liquidity-providers/VelodromeSlipstream.js'
 import { WagmiProvider } from '../liquidity-providers/Wagmi.js'
 import { WigoswapProvider } from '../liquidity-providers/Wigoswap.js'
 import { ZebraV2Provider } from '../liquidity-providers/ZebraV2.js'
@@ -229,6 +232,7 @@ export class RainDataFetcher extends DataFetcher {
       UniswapV2Provider,
       UniswapV3Provider,
       VelodromeSlipstreamProvider,
+      VelodromeSlipstreamV2Provider,
       UpV3Provider,
       VVSStandardProvider,
       VVSFlawlessProvider,
@@ -302,11 +306,16 @@ export class RainDataFetcher extends DataFetcher {
     // a pool's blockNumber is the block whose state its cached data reflects
     const poolStateBlocks = new Map<string, bigint>()
     const addresses: string[] = [...this.factories]
-    if (typeof untilBlock !== 'bigint') {
-      untilBlock = await this.web3Client.getBlockNumber()
-    }
+    const targetBlock: bigint =
+      typeof untilBlock === 'bigint'
+        ? untilBlock
+        : await this.web3Client.getBlockNumber()
+    untilBlock = targetBlock
 
-    // gather all provider pools addresses
+    // gather the addresses of the pools that are behind the requested
+    // block, pools already at or ahead of it take no part in this round:
+    // their logs are not fetched, their state is not re-read and their
+    // blockNumber is not touched (see the providers' afterProcessLog)
     this.providers.forEach((provider: any) => {
       if (
         provider instanceof UniswapV2BaseProvider ||
@@ -314,12 +323,10 @@ export class RainDataFetcher extends DataFetcher {
       ) {
         const pools = provider.pools
         pools.forEach((pool, address) => {
+          if (pool.blockNumber >= targetBlock) return
           poolAddresses.push(address)
           poolStateBlocks.set(address, pool.blockNumber)
-          if (fromBlock === -1n) {
-            fromBlock = pool.blockNumber
-          }
-          if (pool.blockNumber < fromBlock) {
+          if (fromBlock === -1n || pool.blockNumber < fromBlock) {
             fromBlock = pool.blockNumber
           }
         })
@@ -334,22 +341,9 @@ export class RainDataFetcher extends DataFetcher {
         }
       }
     })
-    if (fromBlock === -1n) return false
-    // the cached state already includes the logs of fromBlock itself, so
-    // there is nothing new until the block after it
-    if (fromBlock >= untilBlock) {
-      // when fromBlock > untilBlock:
-      // throw [
-      //   'pools data are cached at higher block height than the requested block height',
-      //   'if you wish to get pools data at your requested block height',
-      //   'consider calling fetchPoolsForToken() with "ignoreCache" option',
-      //   'so that pools data can fetched for lower block height than what they are currently cached at',
-      //   `pools block height: ${fromBlock}`,
-      //   `requested block height: ${untilBlock}`,
-      // ].join(', ')
-      return false
-    }
-    if (!poolAddresses.length) return false
+    // nothing behind the requested block, the cached state of every pool
+    // already includes the logs up to its own block
+    if (fromBlock === -1n || !poolAddresses.length) return false
     addresses.push(...poolAddresses)
 
     // get logs of (fromBlock, untilBlock] in inclusive slices of 1000 blocks
@@ -414,7 +408,9 @@ export class RainDataFetcher extends DataFetcher {
     let isNewPoolCreated = false
     logs.forEach((log) => {
       // pools can be cached at different blocks, a pool's own logs at or
-      // before its state block are already reflected in its cached data
+      // before its state block are already reflected in its cached data.
+      // factory and fee module logs are not keyed by pool, the providers
+      // guard those per pool with the pool's blockNumber
       const stateBlock = poolStateBlocks.get(log.address.toLowerCase())
       if (
         stateBlock !== undefined &&
@@ -437,7 +433,8 @@ export class RainDataFetcher extends DataFetcher {
           provider instanceof UniswapV3BaseProvider
         ) {
           provider.pools.forEach((pool) => {
-            pool.blockNumber = untilBlock!
+            // pools ahead of the requested block took no part in this round
+            if (pool.blockNumber <= untilBlock!) pool.blockNumber = untilBlock!
           })
         }
       }

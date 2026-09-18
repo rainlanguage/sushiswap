@@ -684,7 +684,10 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
   override async afterProcessLog(untilBlock: bigint) {
     const shouldResetFees = this.shouldResetFees
     this.shouldResetFees = false
-    const pools = Array.from(this.pools.values()) as SlipstreamPool[]
+    // pools cached ahead of untilBlock take no part in this round, their
+    // state cannot be read at a block before the one they reflect
+    const allPools = Array.from(this.pools.values()) as SlipstreamPool[]
+    const pools = allPools.filter((pool) => pool.blockNumber <= untilBlock)
 
     await Promise.allSettled([
       // base after log process
@@ -704,6 +707,9 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
               this.applyFeeConfig(pool, config)
               this.refreshStaticFee(pool)
             })
+            // pools ahead of this round still hold settings read from the
+            // old module, keep the reset pending until a round covers them
+            if (pools.length !== allPools.length) this.shouldResetFees = true
           } else {
             // if failed, we'll try again on next update
             this.shouldResetFees = true

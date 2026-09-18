@@ -246,6 +246,19 @@ export abstract class VelodromeSlipstreamDynamicFeeBaseProvider extends Velodrom
     return feeCap < BigInt(base) ? Number(feeCap) : base
   }
 
+  /**
+   * Re-resolves the static fee of the pools whose cached state does not
+   * already include the given module wide log. Pools cached at a later
+   * block than the log have its effect (and any later one) baked in, and
+   * the module wide value being replayed is older than their state
+   */
+  protected refreshStaticFeesUpTo(log: Log) {
+    this.pools.forEach((pool) => {
+      if (log.blockNumber === null || log.blockNumber >= pool.blockNumber)
+        this.refreshStaticFee(pool as SlipstreamPool)
+    })
+  }
+
   protected override otherFactoryEventCases(log: Log, event: any) {
     switch (event.eventName) {
       case 'ScalingFactorSet':
@@ -278,18 +291,14 @@ export abstract class VelodromeSlipstreamDynamicFeeBaseProvider extends Velodrom
         this.defaultScalingFactor[this.chainId] = BigInt(
           event.args.defaultScalingFactor,
         )
-        this.pools.forEach((pool) =>
-          this.refreshStaticFee(pool as SlipstreamPool),
-        )
+        this.refreshStaticFeesUpTo(log)
         break
       }
       case 'DefaultFeeCapSet': {
         // caps the static fee of non volatile pools, so re-resolve all of
         // them, the volatile ones get re-read at afterProcessLog anyway
         this.defaultFeeCap[this.chainId] = BigInt(event.args.defaultFeeCap)
-        this.pools.forEach((pool) =>
-          this.refreshStaticFee(pool as SlipstreamPool),
-        )
+        this.refreshStaticFeesUpTo(log)
         break
       }
       case 'SecondsAgoSet': {

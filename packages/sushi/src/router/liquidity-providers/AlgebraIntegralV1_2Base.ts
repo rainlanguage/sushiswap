@@ -144,9 +144,10 @@ export abstract class AlgebraIntegralV1_2BaseProvider extends AlgebraIntegralV1B
 
   override async afterProcessLog(untilBlock: bigint) {
     // refresh the dynamic fees of all cached pools, the fee for the next
-    // swap drifts with volatility even when no event fires
+    // swap drifts with volatility even when no event fires. pools cached
+    // ahead of untilBlock take no part in this round
     const pluginFeesPromise = this.updatePluginFees(
-      [...this.pools.values()],
+      [...this.pools.values()].filter((pool) => pool.blockNumber <= untilBlock),
       untilBlock,
     )
     const reservesPromise = this.getReserves(this.onSwapPluginFeeUpdatePools, {

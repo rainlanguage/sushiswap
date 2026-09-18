@@ -357,3 +357,41 @@ describe('slipstream dynamic fee module v1 (optimism)', () => {
     expect(names).not.toContain('InitialFeeDisabled')
   })
 })
+
+describe('module wide events vs pools cached ahead of the log', () => {
+  let provider: AerodromeSlipstreamProvider
+  beforeEach(() => {
+    provider = setup(new AerodromeSlipstreamProvider(ChainId.BASE, client))
+  })
+
+  it('does not refresh a pool cached after the DefaultFeeCapSet log', () => {
+    provider.processLog(moduleLog('CustomFeeSet', { pool: POOL, fee: 25000 }))
+    expect(pool(provider).fee).toBe(25000)
+    // pool state now reflects block 300, which already includes a later
+    // default cap than the one being replayed at block 120
+    pool(provider).blockNumber = 300n
+    provider.processLog(
+      moduleLog('DefaultFeeCapSet', { defaultFeeCap: 10000n }, MODULE, 120n),
+    )
+    expect(pool(provider).fee).toBe(25000)
+    // a log at or after the pool's block does apply
+    provider.processLog(
+      moduleLog('DefaultFeeCapSet', { defaultFeeCap: 10000n }, MODULE, 300n),
+    )
+    expect(pool(provider).fee).toBe(10000)
+  })
+
+  it('does not refresh a pool cached after the DefaultScalingFactorSet log', () => {
+    pool(provider).blockNumber = 300n
+    pool(provider).fee = 777
+    provider.processLog(
+      moduleLog(
+        'DefaultScalingFactorSet',
+        { defaultScalingFactor: 0n },
+        MODULE,
+        120n,
+      ),
+    )
+    expect(pool(provider).fee).toBe(777)
+  })
+})
