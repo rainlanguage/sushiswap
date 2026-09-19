@@ -93,7 +93,10 @@ import { UniswapV3Provider } from './liquidity-providers/UniswapV3.js'
 import { UpV3Provider } from './liquidity-providers/UpV3Provider.js'
 import { VVSFlawlessProvider } from './liquidity-providers/VVSFlawless.js'
 import { VVSStandardProvider } from './liquidity-providers/VVSStandard.js'
-import { VelodromeSlipstreamProvider } from './liquidity-providers/VelodromeSlipstream.js'
+import {
+  VelodromeSlipstreamProvider,
+  VelodromeSlipstreamV2Provider,
+} from './liquidity-providers/VelodromeSlipstream.js'
 import { WagmiProvider } from './liquidity-providers/Wagmi.js'
 import { WigoswapProvider } from './liquidity-providers/Wigoswap.js'
 import { ZebraV2Provider } from './liquidity-providers/ZebraV2.js'
@@ -275,6 +278,7 @@ export class DataFetcher {
       UniswapV3Provider,
       UpV3Provider,
       VelodromeSlipstreamProvider,
+      VelodromeSlipstreamV2Provider,
       VVSStandardProvider,
       VVSFlawlessProvider,
       WagmiProvider,

@@ -1,9 +1,10 @@
 import { PublicClient } from 'viem'
 import { ChainId } from '../../chain/index.js'
-import { VelodromeSlipstreamBaseProvider } from '../rain/VelodromeSlipstreamBase.js'
+import { VelodromeSlipstreamDynamicFeeV2BaseProvider } from '../rain/VelodromeSlipstreamDynamicFeeBase.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 
-export class AerodromeSlipstreamProvider extends VelodromeSlipstreamBaseProvider {
+// factory 0x5e7B... runs the DynamicSwapFeeModule with initial fee patch
+export class AerodromeSlipstreamProvider extends VelodromeSlipstreamDynamicFeeV2BaseProvider {
   override DEFAULT_TICK_SPACINGS = [1, 50, 100, 200, 2000, 10] as any
   override tickSpacings: number[] = [...this.DEFAULT_TICK_SPACINGS]
   constructor(chainId: ChainId, web3Client: PublicClient) {
