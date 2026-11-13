@@ -500,11 +500,16 @@ export abstract class UniswapV2BaseProvider extends LiquidityProvider {
     return Array.from(set)
   }
 
-  getStaticPools(t1: Token, t2: Token): StaticPool[] {
+  getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPool[] {
     const currencyCombination = getCurrencyCombinations(
       this.chainId,
       t1,
       t2,
+      extraPairs,
     ).map(([c0, c1]) => (c0.sortsBefore(c1) ? [c0, c1] : [c1, c0]))
     return currencyCombination.map((combination) => ({
       address: this._getPoolAddress(combination[0]!, combination[1]!),

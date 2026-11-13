@@ -80,7 +80,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
   compressedTickTable = false
 
   // tick table word index of the given tick, honoring compressedTickTable
-  tickWord(tick: number, tickSpacing: number): number {
+  override tickWord(tick: number, tickSpacing: number): number {
     return this.compressedTickTable
       ? Math.floor(tick / tickSpacing / 256)
       : bitmapIndex(tick, tickSpacing)
@@ -112,7 +112,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
     excludePools?: Set<string> | PoolFilter,
     options?: RainDataFetcherOptions,
   ): Promise<RainV3Pool[]> {
-    let staticPools = this.getStaticPools(t0, t1)
+    let staticPools = this.getStaticPools(t0, t1, options?.fetchPoolsExtraPairs)
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
@@ -207,8 +207,17 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
     return existingPools
   }
 
-  override getStaticPools(t1: Token, t2: Token): StaticPoolUniV3[] {
-    const allCombinations = getCurrencyCombinations(this.chainId, t1, t2)
+  override getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPoolUniV3[] {
+    const allCombinations = getCurrencyCombinations(
+      this.chainId,
+      t1,
+      t2,
+      extraPairs,
+    )
     const currencyCombinations: [Token, Token][] = []
     allCombinations.forEach(([currencyA, currencyB]) => {
       if (currencyA && currencyB) {
@@ -366,40 +375,6 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
       ),
     )
     return [minIndexes, maxIndexes]
-  }
-
-  /**
-   * Adds a new tick to the given pool's tick list
-   */
-  override addTick(tick: number, amount: bigint, pool: RainV3Pool) {
-    const tickWord = this.tickWord(tick, pool.tickSpacing)
-    const ticks = pool.ticks.get(tickWord)
-    if (ticks !== undefined) {
-      if (ticks.length === 0 || tick < ticks[0]!.index) {
-        ticks.unshift({ index: tick, DLiquidity: amount })
-        return
-      }
-      if (tick === ticks[0]!.index) {
-        ticks[0]!.DLiquidity = ticks[0]!.DLiquidity + amount
-        if (ticks[0]!.DLiquidity === 0n) ticks.splice(0, 1)
-        return
-      }
-
-      let start = 0
-      let end = ticks.length
-      while (end - start > 1) {
-        const middle = Math.floor((start + end) / 2)
-        const index = ticks[middle]!.index
-        if (index < tick) start = middle
-        else if (index > tick) end = middle
-        else {
-          ticks[middle]!.DLiquidity = ticks[middle]!.DLiquidity + amount
-          if (ticks[middle]!.DLiquidity === 0n) ticks.splice(middle, 1)
-          return
-        }
-      }
-      ticks.splice(start + 1, 0, { index: tick, DLiquidity: amount })
-    }
   }
 
   /**

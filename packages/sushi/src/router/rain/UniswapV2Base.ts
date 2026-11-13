@@ -33,7 +33,7 @@ export abstract class UniswapV2BaseProvider extends _UniswapV2BaseProvider {
     excludePools?: Set<string>,
     options?: RainDataFetcherOptions,
   ): Promise<void> {
-    let pools = this.getStaticPools(t0, t1)
+    let pools = this.getStaticPools(t0, t1, options?.fetchPoolsExtraPairs)
     if (excludePools)
       pools = (pools as RainV2Pool[]).filter(
         (p) => !excludePools.has(p.address),
