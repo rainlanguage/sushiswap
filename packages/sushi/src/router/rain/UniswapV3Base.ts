@@ -23,6 +23,21 @@ export interface RainV3Pool extends V3Pool {
   blockNumber: bigint
 }
 
+/**
+ * a tick word read in flight, see UniswapV3BaseProvider.afterProcessLog: the
+ * tick deltas of the mints and burns applied to its pools while it runs,
+ * past the block it is pinned to, by pool then by tick, added back into the
+ * words it fetched once it lands, the fetched words replace the live ones
+ */
+export interface TickRead {
+  /** the block the read is pinned to, a log at or before it is inside the read */
+  block: bigint
+  /** the lowercase addresses of the pools the read fetches words for */
+  pools: Set<string>
+  /** the tick deltas to add back, by lowercase pool address then by tick */
+  deltas: Map<string, Map<number, bigint>>
+}
+
 export const tickSpacingAbi = [
   {
     inputs: [],
@@ -62,6 +77,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
   nullPools: Map<string, number> = new Map()
   eventsAbi = UniV3EventsAbi
   newTicksQueue: [RainV3Pool, number[]][] = []
+  /** the tick word reads in flight, see afterProcessLog and addTick */
+  tickReads = new Set<TickRead>()
 
   override getActiveTick = (tickCurrent: number, tickSpacing?: number) =>
     typeof tickCurrent === 'number' && typeof tickSpacing === 'number'
@@ -74,7 +91,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     excludePools?: Set<string> | PoolFilter,
     options?: RainDataFetcherOptions,
   ): Promise<RainV3Pool[]> {
-    let staticPools = this.getStaticPools(t0, t1)
+    let staticPools = this.getStaticPools(t0, t1, options?.fetchPoolsExtraPairs)
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
@@ -250,22 +267,56 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     return result
   }
 
-  override async afterProcessLog(untilBlock: bigint) {
-    const newTicksQueue = [...this.newTicksQueue.splice(0)]
-    if (newTicksQueue.length) {
-      const newTicks = await this.getTicksInner(newTicksQueue, {
+  override async afterProcessLog(untilBlock: bigint, _pools?: Set<string>) {
+    // only the pools with tick words to read, nothing to do without one, the
+    // queue is the list of the pools that need it, the scope is not applied.
+    // A pool ahead of the round, a log of a later block moved it before the
+    // round began, waits for a round at or past its block: a word read at
+    // this block would miss that log, and no read tracks it
+    const queued = this.newTicksQueue
+      .splice(0)
+      .filter(([, words]) => words.length > 0)
+    const ahead = queued.filter(([pool]) => pool.blockNumber > untilBlock)
+    if (ahead.length) this.newTicksQueue.push(...ahead)
+    const newTicksQueue = queued.filter(
+      ([pool]) => pool.blockNumber <= untilBlock,
+    )
+    if (!newTicksQueue.length) return
+    // the logs that arrive while the words are read keep applying, a mint or
+    // burn into a word the read brings back is added into that word once it
+    // lands, the fetched word replaces the live one, see addTick
+    const read: TickRead = {
+      block: untilBlock,
+      pools: new Set(newTicksQueue.map(([pool]) => pool.address.toLowerCase())),
+      deltas: new Map(),
+    }
+    this.tickReads.add(read)
+    let newTicks: Map<number, CLTick[]>[] | undefined
+    try {
+      newTicks = await this.getTicksInner(newTicksQueue, {
         blockNumber: untilBlock,
       })
-      if (newTicks) {
-        newTicksQueue.forEach(([pool], i) => {
-          newTicks?.[i]?.forEach((newTick, index) => {
-            pool.ticks.set(index, newTick)
-          })
+    } finally {
+      this.tickReads.delete(read)
+    }
+    if (newTicks) {
+      newTicksQueue.forEach(([pool], i) => {
+        const deltas = read.deltas.get(pool.address.toLowerCase())
+        newTicks?.[i]?.forEach((newTick, index) => {
+          if (deltas) {
+            mergeTickDeltas(
+              newTick,
+              deltas,
+              (tick) => this.tickWord(tick, pool.tickSpacing),
+              index,
+            )
+          }
+          pool.ticks.set(index, newTick)
         })
-      } else {
-        // if unsuccessfull to get new ticks, put them back on queue for next try
-        this.newTicksQueue.push(...newTicksQueue)
-      }
+      })
+    } else {
+      // if unsuccessfull to get new ticks, put them back on queue for next try
+      this.newTicksQueue.push(...newTicksQueue)
     }
   }
 
@@ -276,6 +327,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     existingPools: RainV3Pool[],
     options?: RainDataFetcherOptions,
   ): Promise<([bigint, bigint] | undefined)[]> {
+    // viem still sends an empty aggregate3 call for an empty list
+    if (!existingPools.length) return []
     const results = await this.client
       .multicall({
         multicallAddress: this.client.chain?.contracts?.multicall3
@@ -332,6 +385,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     existingPools: RainV3Pool[],
     options?: RainDataFetcherOptions,
   ): Promise<(bigint | undefined)[]> {
+    // viem still sends an empty aggregate3 call for an empty list
+    if (!existingPools.length) return []
     const results = await this.client
       .multicall({
         multicallAddress: this.client.chain?.contracts?.multicall3
@@ -418,6 +473,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
         index: [i, j],
       }))
     })
+    // viem still sends an empty aggregate3 call for an empty list
+    if (!wordList.length) return existingPools.map(() => new Map())
 
     const tickResults = await this.client
       .multicall({
@@ -581,8 +638,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
                 tickUpper !== undefined &&
                 amount !== undefined
               ) {
-                this.addTick(tickLower, amount, pool)
-                this.addTick(tickUpper, -amount, pool)
+                this.addTick(tickLower, amount, pool, log.blockNumber!)
+                this.addTick(tickUpper, -amount, pool, log.blockNumber!)
               }
             }
             break
@@ -606,8 +663,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
                 tickUpper !== undefined &&
                 amount !== undefined
               ) {
-                this.addTick(tickLower, -amount, pool)
-                this.addTick(tickUpper, amount, pool)
+                this.addTick(tickLower, -amount, pool, log.blockNumber!)
+                this.addTick(tickUpper, amount, pool, log.blockNumber!)
               }
             }
             break
@@ -650,17 +707,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
                 pool.tick = tick
                 pool.activeTick =
                   Math.floor(tick / pool.tickSpacing) * pool.tickSpacing
-                const newTicks = this.onPoolTickChange(pool.activeTick, pool)
-                const queue = this.newTicksQueue.find(
-                  (v) => v[0].address === pool.address,
-                )
-                if (queue) {
-                  for (const t of newTicks) {
-                    if (!queue[1].includes(t)) queue[1].push(t)
-                  }
-                } else {
-                  this.newTicksQueue.push([pool, newTicks])
-                }
+                this.queueNewTicks(pool)
               }
             }
             break
@@ -673,41 +720,57 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     }
   }
 
+  /**
+   * Queues the tick words around the pool's active tick that are not
+   * cached yet, they get read at afterProcessLog()
+   */
+  queueNewTicks(pool: RainV3Pool) {
+    const newTicks = this.onPoolTickChange(pool.activeTick, pool)
+    // the window around the active tick is already cached, nothing to read
+    if (!newTicks.length) return
+    const queue = this.newTicksQueue.find((v) => v[0].address === pool.address)
+    if (queue) {
+      for (const t of newTicks) {
+        if (!queue[1].includes(t)) queue[1].push(t)
+      }
+    } else {
+      this.newTicksQueue.push([pool, newTicks])
+    }
+  }
+
   // for child classes if they have other events to handle such as AlgebraV1Base
   otherEventCases(_log: Log, _event: Log, _pool: RainV3Pool) {}
 
-  /**
-   * Adds a new tick to the given pool's tick list
-   */
-  addTick(tick: number, amount: bigint, pool: RainV3Pool) {
-    const tickWord = bitmapIndex(tick, pool.tickSpacing)
-    const ticks = pool.ticks.get(tickWord)
-    if (ticks !== undefined) {
-      if (ticks.length === 0 || tick < ticks[0]!.index) {
-        ticks.unshift({ index: tick, DLiquidity: amount })
-        return
-      }
-      if (tick === ticks[0]!.index) {
-        ticks[0]!.DLiquidity = ticks[0]!.DLiquidity + amount
-        if (ticks[0]!.DLiquidity === 0n) ticks.splice(0, 1)
-        return
-      }
+  /** the tick table word of the given tick, a fork with another table layout overrides it */
+  tickWord(tick: number, tickSpacing: number): number {
+    return bitmapIndex(tick, tickSpacing)
+  }
 
-      let start = 0
-      let end = ticks.length
-      while (end - start > 1) {
-        const middle = Math.floor((start + end) / 2)
-        const index = ticks[middle]!.index
-        if (index < tick) start = middle
-        else if (index > tick) end = middle
-        else {
-          ticks[middle]!.DLiquidity = ticks[middle]!.DLiquidity + amount
-          if (ticks[middle]!.DLiquidity === 0n) ticks.splice(middle, 1)
-          return
-        }
+  /**
+   * Adds the given liquidity delta to a tick of the given pool, in the word
+   * the pool holds it in, nothing when the pool does not hold that word yet.
+   * A word read in flight for the pool that is pinned before the log's block
+   * takes the delta as well: the word it brings back replaces the live one,
+   * so the delta is added back into it once it lands, see afterProcessLog
+   * @param tick - The tick
+   * @param amount - The liquidity delta
+   * @param pool - The pool
+   * @param block - (optional) The block of the log the delta is of, none for a delta no read must add back
+   */
+  addTick(tick: number, amount: bigint, pool: RainV3Pool, block?: bigint) {
+    const ticks = pool.ticks.get(this.tickWord(tick, pool.tickSpacing))
+    if (ticks !== undefined) addTickTo(ticks, tick, amount)
+    if (block === undefined || !this.tickReads.size) return
+    const address = pool.address.toLowerCase()
+    this.tickReads.forEach((read) => {
+      if (!read.pools.has(address) || block <= read.block) return
+      let deltas = read.deltas.get(address)
+      if (!deltas) {
+        deltas = new Map()
+        read.deltas.set(address, deltas)
       }
-      ticks.splice(start + 1, 0, { index: tick, DLiquidity: amount })
-    }
+      deltas.set(tick, (deltas.get(tick) ?? 0n) + amount)
+    })
   }
 
   /**
@@ -779,4 +842,58 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     this.poolsByTrade.clear()
     this.nullPools.clear()
   }
+}
+
+/**
+ * Adds a liquidity delta to a tick in a word's sorted tick list: a tick that
+ * is not there is put in at its place, one whose liquidity ends at zero goes
+ * @param ticks - The word's ticks, sorted by index
+ * @param tick - The tick
+ * @param amount - The liquidity delta
+ */
+export function addTickTo(ticks: CLTick[], tick: number, amount: bigint) {
+  if (ticks.length === 0 || tick < ticks[0]!.index) {
+    ticks.unshift({ index: tick, DLiquidity: amount })
+    return
+  }
+  if (tick === ticks[0]!.index) {
+    ticks[0]!.DLiquidity = ticks[0]!.DLiquidity + amount
+    if (ticks[0]!.DLiquidity === 0n) ticks.splice(0, 1)
+    return
+  }
+  let start = 0
+  let end = ticks.length
+  while (end - start > 1) {
+    const middle = Math.floor((start + end) / 2)
+    const index = ticks[middle]!.index
+    if (index < tick) start = middle
+    else if (index > tick) end = middle
+    else {
+      ticks[middle]!.DLiquidity = ticks[middle]!.DLiquidity + amount
+      if (ticks[middle]!.DLiquidity === 0n) ticks.splice(middle, 1)
+      return
+    }
+  }
+  ticks.splice(start + 1, 0, { index: tick, DLiquidity: amount })
+}
+
+/**
+ * Adds the deltas that fall into a fetched word into it, the mints and burns
+ * applied while the word was read, see TickRead. The word is told by the
+ * given function, the fork's own table layout
+ * @param ticks - The fetched word's ticks, sorted by index
+ * @param deltas - The deltas by tick
+ * @param wordOf - The word of a tick
+ * @param word - The word the ticks are of
+ */
+export function mergeTickDeltas(
+  ticks: CLTick[],
+  deltas: Map<number, bigint>,
+  wordOf: (tick: number) => number,
+  word: number,
+) {
+  deltas.forEach((delta, tick) => {
+    if (delta === 0n || wordOf(tick) !== word) return
+    addTickTo(ticks, tick, delta)
+  })
 }

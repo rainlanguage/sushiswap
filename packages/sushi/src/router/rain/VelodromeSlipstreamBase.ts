@@ -149,6 +149,16 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
   tickSpacings: number[] = [...this.DEFAULT_TICK_SPACINGS]
 
   shouldResetFees = false
+  /** the block the swap fee module changed at, the reset read runs at or past it */
+  resetFeesFrom: bigint | undefined
+  /** the pools whose fee settings the reset still has to read from the new module, by lowercase address */
+  resetPending: Set<string> = new Set()
+  /** the new module's state was read after the change */
+  resetModuleRead = false
+  /** the block of the newest round that read volatile pools' fees, bookkeeping, the per pool blocks guard, see feeRoundBlocks */
+  feeRoundBlock = -1n
+  /** the block of the newest volatile fee round that set each pool's fee, lowercase address, a round covers the pools it was asked for only, see afterProcessLog */
+  feeRoundBlocks = new Map<string, bigint>()
   feeSpacingMap: Record<number, number> = {} // fee to tick spacing map
   spacingFeeMap: Record<number, number> = {} // tick spacing to fee map
 
@@ -485,7 +495,7 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
   ): Promise<SlipstreamPool[]> {
     await this.init(options?.blockNumber)
 
-    let staticPools = this.getStaticPools(t0, t1)
+    let staticPools = this.getStaticPools(t0, t1, options?.fetchPoolsExtraPairs)
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
@@ -614,10 +624,11 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
     const logAddress = log.address.toLowerCase()
     const factory =
       this.factory[this.chainId as keyof typeof this.factory]!.toLowerCase()
+    // the module address is only known after init()
     const swapFeeModule =
       this.swapFeeModule[
         this.chainId as keyof typeof this.swapFeeModule
-      ]!.toLowerCase()
+      ]?.toLowerCase()
     if (logAddress === factory || logAddress === swapFeeModule) {
       try {
         const event = parseEventLogs({
@@ -666,6 +677,9 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
               // PS: this event is very rare
               this.swapFeeModule[this.chainId] = event.args.newFeeModule
               this.shouldResetFees = true
+              this.resetFeesFrom = log.blockNumber ?? undefined
+              this.resetPending = new Set(this.pools.keys())
+              this.resetModuleRead = false
             }
             break
           }
@@ -681,35 +695,57 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
   // for child providers that have other factory/fee module events to handle
   protected otherFactoryEventCases(_log: Log, _event: any) {}
 
-  override async afterProcessLog(untilBlock: bigint) {
-    const shouldResetFees = this.shouldResetFees
-    this.shouldResetFees = false
+  override async afterProcessLog(untilBlock: bigint, scope?: Set<string>) {
+    // the volatile fee re-read is kept to the pools a log touched when a
+    // scope is given, the reset covers its pending pools whatever the scope
+    const inScope = (pool: SlipstreamPool) =>
+      scope === undefined || scope.has(pool.address.toLowerCase())
+    // the reset is for a round at or past the change, a round below it would
+    // read the new module before it took effect
+    const shouldResetFees =
+      this.shouldResetFees &&
+      (this.resetFeesFrom === undefined || untilBlock >= this.resetFeesFrom)
     // pools cached ahead of untilBlock take no part in this round, their
     // state cannot be read at a block before the one they reflect
     const allPools = Array.from(this.pools.values()) as SlipstreamPool[]
     const pools = allPools.filter((pool) => pool.blockNumber <= untilBlock)
+    // no fee to reset and no volatile fee to re-read, only the tick words
+    // of the base are left, if any. without a reset no pool changes its
+    // volatility, so this check matches the list built below
+    if (
+      !shouldResetFees &&
+      !pools.some((pool) => inScope(pool) && this.isVolatile(pool))
+    )
+      return super.afterProcessLog(untilBlock, scope)
+    if (shouldResetFees) this.shouldResetFees = false
 
     await Promise.allSettled([
       // base after log process
-      super.afterProcessLog(untilBlock),
+      super.afterProcessLog(untilBlock, scope),
       (async () => {
         if (shouldResetFees) {
-          // swap fee module changed, re-read the module state and every
-          // pool's fee settings, both only need the new module address
+          // swap fee module changed: read the module state once, and the fee
+          // settings of the pools still to reset that this round covers, a
+          // pool ahead of the round waits for a later one
+          const toReset = pools.filter((pool) =>
+            this.resetPending.has(pool.address.toLowerCase()),
+          )
           const [moduleOk, configs] = await Promise.all([
-            this.initFeeModule(untilBlock),
-            this.readFeeConfigs(pools, untilBlock),
+            this.resetModuleRead ? true : this.initFeeModule(untilBlock),
+            this.readFeeConfigs(toReset, untilBlock),
           ])
           if (moduleOk && configs) {
-            pools.forEach((pool, i) => {
+            this.resetModuleRead = true
+            toReset.forEach((pool, i) => {
               const config = configs[i]
               if (!config) return
               this.applyFeeConfig(pool, config)
               this.refreshStaticFee(pool)
+              this.resetPending.delete(pool.address.toLowerCase())
             })
-            // pools ahead of this round still hold settings read from the
-            // old module, keep the reset pending until a round covers them
-            if (pools.length !== allPools.length) this.shouldResetFees = true
+            // the pools ahead of this round, and the ones whose read failed,
+            // keep the reset pending until a round covers them
+            if (this.resetPending.size) this.shouldResetFees = true
           } else {
             // if failed, we'll try again on next update
             this.shouldResetFees = true
@@ -717,18 +753,39 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         }
         // volatile pools get their fee re-read every round, on failure
         // they keep their previous fee until the next round
-        const volatilePools = pools.filter((pool) => this.isVolatile(pool))
+        const volatilePools = pools.filter(
+          (pool) => inScope(pool) && this.isVolatile(pool),
+        )
         const fees = await this.readPoolFees(volatilePools, untilBlock)
+        // rounds at different blocks can run at once, the result of an older
+        // round that lands after a newer one must not set a fee back. The
+        // rounds cover different pools, so the newest round is kept per pool
+        if (!fees) return
+        if (untilBlock > this.feeRoundBlock) this.feeRoundBlock = untilBlock
         volatilePools.forEach((pool, i) => {
           const fee = fees?.[i]
-          if (typeof fee === 'number') pool.fee = fee
+          if (typeof fee !== 'number') return
+          const address = pool.address.toLowerCase()
+          const newest = this.feeRoundBlocks.get(address)
+          if (newest !== undefined && untilBlock < newest) return
+          this.feeRoundBlocks.set(address, untilBlock)
+          pool.fee = fee
         })
       })(),
     ])
   }
 
-  override getStaticPools(t1: Token, t2: Token): StaticSlipstreamPool[] {
-    const allCombinations = getCurrencyCombinations(this.chainId, t1, t2)
+  override getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticSlipstreamPool[] {
+    const allCombinations = getCurrencyCombinations(
+      this.chainId,
+      t1,
+      t2,
+      extraPairs,
+    )
     const currencyCombinations: [Token, Token, number][] = []
     allCombinations.forEach(([currencyA, currencyB]) => {
       if (currencyA && currencyB) {
