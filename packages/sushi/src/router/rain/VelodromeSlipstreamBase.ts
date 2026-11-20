@@ -499,12 +499,7 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
-    const tradeId = this.getTradeId(t0, t1)
-    if (!this.poolsByTrade.has(tradeId))
-      this.poolsByTrade.set(
-        tradeId,
-        staticPools.map((pool) => pool.address.toLowerCase()),
-      )
+    this.addTradePools(t0, t1, staticPools)
 
     // filter out cached pools
     // this ensures backward compatibility for original DataFetcher
@@ -765,6 +760,9 @@ export abstract class VelodromeSlipstreamBaseProvider extends UniswapV3BaseProvi
         volatilePools.forEach((pool, i) => {
           const fee = fees?.[i]
           if (typeof fee !== 'number') return
+          // a fee module log applied during the read made the pool's fee
+          // static, the fee it set is newer than the read
+          if (!this.isVolatile(pool)) return
           const address = pool.address.toLowerCase()
           const newest = this.feeRoundBlocks.get(address)
           if (newest !== undefined && untilBlock < newest) return

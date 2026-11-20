@@ -282,6 +282,42 @@ describe('afterProcessLog keeps its fee re-reads to the given pools', () => {
     expect(a.fee).toBe(610)
     expect(b.fee).toBe(620)
   })
+
+  it('slipstream: a volatile fee read that lands after a fee module log made the pool static sets nothing', async () => {
+    const provider = new AerodromeSlipstreamProvider(
+      ChainId.BASE,
+      client as any,
+    )
+    const module = '0x5555555555555555555555555555555555555555' as Address
+    provider.swapFeeModule[ChainId.BASE] = module
+    ;(provider as any).defaultScalingFactor[ChainId.BASE] = 0n
+    ;(provider as any).defaultFeeCap[ChainId.BASE] = 1_000_000n
+    const a = pool({
+      feeType: FeeType.Dynamic,
+      feeConfig: { ...DEFAULT_FEE_CONFIG, baseFee: 400, scalingFactor: 5n },
+    })
+    provider.pools.set(POOL.toLowerCase(), a)
+    expect((provider as any).isVolatile(a)).toBe(true)
+    const read = deferred<number[]>()
+    ;(provider as any).readPoolFees = vi.fn(() => read.promise)
+    const running = provider.afterProcessLog(20n)
+    // a log of 21 sets the scaling factor to zero, the fee is the base fee
+    provider.processLog({
+      ...logOf(
+        provider.eventsAbi,
+        'ScalingFactorSet',
+        { pool: POOL, scalingFactor: 0n },
+        21n,
+      ),
+      address: module,
+    } as Log)
+    expect((provider as any).isVolatile(a)).toBe(false)
+    expect(a.fee).toBe(400)
+    // the read of 20 lands: the pool is static now, its fee stays
+    read.release([700])
+    await running
+    expect(a.fee).toBe(400)
+  })
 })
 
 describe('afterProcessLog adds the logs applied during its read back', () => {

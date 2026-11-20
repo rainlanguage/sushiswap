@@ -14,6 +14,7 @@ import {
   LiquidityProvider,
   LiquidityProviders,
 } from '../liquidity-providers/LiquidityProvider.js'
+import { promiseTimeout } from '../timeout.js'
 import { RainDataFetcher, RainDataFetcherOptions } from './RainDataFetcher.js'
 import { RainV2Pool, UniswapV2BaseProvider } from './UniswapV2Base.js'
 import { RainV3Pool, UniswapV3BaseProvider } from './UniswapV3Base.js'
@@ -45,6 +46,9 @@ export const STREAM_READ_LAG_WARN = 10n
 
 /** the blocks one log read covers at most, the paging of the rpc specs */
 const LOG_READ_SLICE = 1000n
+
+/** the rejection of a fetch whose fetchPoolsTimeout passed, see fetchPoolsForToken */
+const FETCH_TIMEOUT = Symbol('fetch timeout')
 
 /** a provider that holds pools */
 export type TrackedProvider = UniswapV2BaseProvider | UniswapV3BaseProvider
@@ -101,7 +105,10 @@ export interface StreamOptions {
    * run the follow up for the providers a log touched since their last run
    * only, and their fee re-reads for the touched pools only, a module wide
    * change widens that to every pool of the provider; false runs every
-   * provider over every pool at each run, default true
+   * provider over every pool at each run, default true. A fee that drifts
+   * without an event, the volatile fee of a slipstream pool and the plugin
+   * fee of an algebra integral 1.2 pool, is not read again for a pool no log
+   * touches
    */
   followUpTouchedOnly?: boolean
 }
@@ -371,7 +378,10 @@ export class RainDataFetcherStream extends RainDataFetcher {
   /**
    * Drops the stream, the pools stay as they are and updatePools() is the
    * parent's again. The wait for the node to confirm the unsubscribes is
-   * bounded, a dead socket never answers
+   * bounded, a dead socket never answers. A pool can hold only part of the
+   * logs of its newest block (with flashblocks that is the usual case), and
+   * the parent's round skips the logs at or below a pool's block, so reset
+   * and fetch the pools again before the parent's round runs
    */
   async stop() {
     this.epoch++
@@ -430,9 +440,38 @@ export class RainDataFetcherStream extends RainDataFetcher {
    * when they are new to it. Once it covers them a gap read brings them
    * from that block to the head and lifts the hold. The fetch does not
    * wait for the socket, it resolves with the parent's. A fetch that began
-   * before the stream started admits its pools the same way
+   * before the stream started admits its pools the same way. With
+   * fetchPoolsTimeout the fetch resolves once the timeout passed, and the
+   * admission waits for the provider fetches, which go on and write their
+   * pools later
    */
   override async fetchPoolsForToken(
+    currency0: Type,
+    currency1: Type,
+    excludePools?: Set<string>,
+    options?: RainDataFetcherOptions,
+  ): Promise<void> {
+    const { fetchPoolsTimeout: timeout, ...untimed } = options ?? {}
+    // the parent's timeout leaves the provider fetches running, the parent
+    // runs without it so that its end is theirs
+    const fetching = this.fetchAndAdmit(
+      currency0,
+      currency1,
+      excludePools,
+      timeout ? untimed : options,
+    )
+    if (!timeout) return fetching
+    // a failure after the timeout has no caller left
+    fetching.catch(() => {})
+    await promiseTimeout(fetching, timeout, FETCH_TIMEOUT).catch(
+      (e: unknown) => {
+        if (e !== FETCH_TIMEOUT) throw e
+      },
+    )
+  }
+
+  /** The parent's fetch, then in stream mode the admission of the pool objects it wrote, see fetchPoolsForToken */
+  private async fetchAndAdmit(
     currency0: Type,
     currency1: Type,
     excludePools?: Set<string>,

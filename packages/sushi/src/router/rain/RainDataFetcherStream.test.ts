@@ -1647,6 +1647,27 @@ describe('RainDataFetcherStream.fetchPoolsForToken', () => {
     expect(poolC.liquidity).toBe(10n)
   })
 
+  it('admits the pools of a fetch past its fetchPoolsTimeout once the provider fetches end', async () => {
+    const s = setup()
+    await started(s)
+    // the parent fetch writes C only once released
+    const release = s.writesC(0n, true, true)
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+      fetchPoolsTimeout: 5,
+    })
+    // the fetch resolved at the timeout, the parent ran without it
+    expect(parentFetch.mock.calls.at(-1)![3]).toEqual({ blockNumber: 17n })
+    expect(s.v3.pools.has(POOL_C)).toBe(false)
+    // the provider fetches end later and write C: it is admitted then
+    release()
+    await tick()
+    const poolC = s.v3.pools.get(POOL_C)!
+    expect(s.fetcher.admitted.get(POOL_C)).toBe(poolC)
+    expect(s.fetcher.complete.get(POOL_C)).toBe(17n)
+    expect(s.fetcher.gaps).toEqual([{ pools: new Set([POOL_C]), readyAt: 19n }])
+  })
+
   it('neither proves nor serves a pool a running fetch wrote until the fetch admits it', async () => {
     const s = setup()
     await started(s)

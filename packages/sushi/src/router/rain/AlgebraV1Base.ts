@@ -116,12 +116,7 @@ export abstract class AlgebraV1BaseProvider extends UniswapV3BaseProvider {
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
-    const tradeId = this.getTradeId(t0, t1)
-    if (!this.poolsByTrade.has(tradeId))
-      this.poolsByTrade.set(
-        tradeId,
-        staticPools.map((pool) => pool.address.toLowerCase()),
-      )
+    this.addTradePools(t0, t1, staticPools)
 
     // filter out cached pools
     // this ensures backward compatibility for original DataFetcher

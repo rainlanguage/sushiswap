@@ -109,11 +109,16 @@ export class LynexV1Provider extends UniswapV2BaseProvider {
   // just overriden to do flatMap() to flatten array of pool addresses
   // per token pair, since LynexV1 also has bool variable in the pool address salt
   // also has 2 fees if the pair is `stable` or not
-  override getStaticPools(t1: Token, t2: Token): StaticPool[] {
+  override getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPool[] {
     const currencyCombination = getCurrencyCombinations(
       this.chainId,
       t1,
       t2,
+      extraPairs,
     ).map(([c0, c1]) => (c0.sortsBefore(c1) ? [c0, c1] : [c1, c0]))
     return currencyCombination.flatMap((combination) => {
       const poolAddresses = this._getPoolAddresses(

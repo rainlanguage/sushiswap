@@ -95,12 +95,7 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     if (excludePools)
       staticPools = staticPools.filter((p) => !excludePools.has(p.address))
 
-    const tradeId = this.getTradeId(t0, t1)
-    if (!this.poolsByTrade.has(tradeId))
-      this.poolsByTrade.set(
-        tradeId,
-        staticPools.map((pool) => pool.address.toLowerCase()),
-      )
+    this.addTradePools(t0, t1, staticPools)
 
     // filter out cached pools
     // this ensures backward compatibility for original DataFetcher
@@ -736,6 +731,23 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
     } else {
       this.newTicksQueue.push([pool, newTicks])
     }
+  }
+
+  /**
+   * Adds the given pools to the pools the trade routes through, a later
+   * fetch with other extra pairs adds its pools to the ones of the first
+   */
+  addTradePools(t0: Token, t1: Token, pools: { address: string }[]) {
+    const tradeId = this.getTradeId(t0, t1)
+    const addresses = pools.map((pool) => pool.address.toLowerCase())
+    const known = this.poolsByTrade.get(tradeId)
+    if (!known) {
+      this.poolsByTrade.set(tradeId, addresses)
+      return
+    }
+    addresses.forEach((address) => {
+      if (!known.includes(address)) known.push(address)
+    })
   }
 
   // for child classes if they have other events to handle such as AlgebraV1Base
