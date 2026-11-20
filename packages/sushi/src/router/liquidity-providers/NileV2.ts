@@ -32,7 +32,7 @@ export class NileV2Provider extends UniswapV2BaseProvider {
     excludePools?: Set<string>,
     options?: RainDataFetcherOptions,
   ): Promise<void> {
-    let pools = this.getStaticPools(t0, t1)
+    let pools = this.getStaticPools(t0, t1, options?.fetchPoolsExtraPairs)
     if (excludePools) pools = pools.filter((p) => !excludePools.has(p.address))
 
     if (pools.length === 0) {
@@ -109,11 +109,16 @@ export class NileV2Provider extends UniswapV2BaseProvider {
     this.setPool(poolCodesToCreate, reserves)
   }
 
-  override getStaticPools(t1: Token, t2: Token): StaticPool[] {
+  override getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPool[] {
     const currencyCombination = getCurrencyCombinations(
       this.chainId,
       t1,
       t2,
+      extraPairs,
     ).map(([c0, c1]) => (c0.sortsBefore(c1) ? [c0, c1] : [c1, c0]))
     return currencyCombination.flatMap((combination) => [
       {

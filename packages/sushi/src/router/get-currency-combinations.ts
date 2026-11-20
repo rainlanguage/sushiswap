@@ -11,6 +11,7 @@ export function getCurrencyCombinations(
   chainId: ChainId,
   currencyA: Type,
   currencyB: Type,
+  extraPairs: [Token, Token][] = [],
 ) {
   const [tokenA, tokenB] = chainId
     ? [currencyA?.wrapped, currencyB?.wrapped]
@@ -43,6 +44,8 @@ export function getCurrencyCombinations(
     ...bases.map((base): [Token, Token] => [tokenB, base]),
     // each base against all bases
     ...basePairs,
+    // extra pairs
+    ...extraPairs,
   ]
     .filter((tokens): tokens is [Token, Token] =>
       Boolean(tokens[0] && tokens[1]),

@@ -1,7 +1,7 @@
 import { http, PublicClient, createPublicClient } from 'viem'
 import { ChainId, TestnetChainId } from '../chain/index.js'
 import { publicClientConfig } from '../config/index.js'
-import { Type } from '../currency/index.js'
+import { Token, Type } from '../currency/index.js'
 import { AerodromeSlipstreamProvider } from './liquidity-providers/AerodromeSlipstream.js'
 import {
   AerodromeSlipstreamV2Provider,
@@ -113,6 +113,8 @@ export type DataFetcherOptions = {
   blockNumber?: bigint
   /** Determines a timeout (in ms) for fetching pools for a token pair */
   fetchPoolsTimeout?: number
+  /** extra token pairs to pass for fetching pools combinations */
+  fetchPoolsExtraPairs?: [Token, Token][]
 }
 
 // TODO: Should be a mode on the config for DataFetcher

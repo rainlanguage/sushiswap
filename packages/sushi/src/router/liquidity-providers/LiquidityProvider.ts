@@ -191,8 +191,9 @@ export abstract class LiquidityProvider {
   /**
    * Represents any process that needs to take place after event logs are processed
    * @param _untilBlock - The block height that pool data are updated to at processLog
+   * @param _pools - (optional) The lowercase addresses of the pools a log touched since the last call, the reads that walk every pool otherwise, a fee re-read say, are kept to them; undefined means every pool. The reads a log queued for a pool, tick words, balances, a fee reset, run regardless
    */
-  async afterProcessLog(_untilBlock: bigint) {}
+  async afterProcessLog(_untilBlock: bigint, _pools?: Set<string>) {}
 }
 
 export const UniV2LiquidityProviders: LiquidityProviders[] = [

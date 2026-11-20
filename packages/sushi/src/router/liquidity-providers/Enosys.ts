@@ -55,11 +55,16 @@ export class EnosysProvider extends UniswapV2BaseProvider {
   // just overriden to do flatMap() to flatten array of pool addresses
   // per token pair, since there will be multiple calculated pool addresses
   // per token pair as a result of having multiple initCodeHashes
-  override getStaticPools(t1: Token, t2: Token): StaticPool[] {
+  override getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPool[] {
     const currencyCombination = getCurrencyCombinations(
       this.chainId,
       t1,
       t2,
+      extraPairs,
     ).map(([c0, c1]) => (c0.sortsBefore(c1) ? [c0, c1] : [c1, c0]))
     return currencyCombination.flatMap((combination) => {
       const poolAddresses = this._getPoolAddresses(

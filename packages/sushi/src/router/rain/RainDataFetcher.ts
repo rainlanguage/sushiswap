@@ -114,11 +114,6 @@ export class RainDataFetcher extends DataFetcher {
   eventsAbi: ParseAbiItem<any>[] = []
   factories: string[] = []
 
-  // make constructor private, must use init() for instantiation
-  private constructor(chainId: ChainId, publicClient?: PublicClient) {
-    super(chainId, publicClient)
-  }
-
   /**
    * Creates an instance of RainDataFetcher, constructor of this class should
    * not be used, instead, use this method to create a new instance
@@ -134,7 +129,9 @@ export class RainDataFetcher extends DataFetcher {
     liquidityProviders?: LiquidityProviders[],
     initBlockNumber?: bigint,
   ): Promise<RainDataFetcher> {
-    const dataFetcher = new RainDataFetcher(chainId, publicClient)
+    // `this` is the class init() is called on, so a child class gets an
+    // instance of itself
+    const dataFetcher = new this(chainId, publicClient)
     if (typeof initBlockNumber === 'bigint') {
       if (initBlockNumber < 0n)
         throw 'expected block number greater than equal zero'
@@ -300,7 +297,7 @@ export class RainDataFetcher extends DataFetcher {
    * pools data will be updated to latest block number
    * @returns true if a new pool has been created during the update process, else false
    */
-  async updatePools(untilBlock?: bigint): Promise<boolean> {
+  async updatePools(untilBlock?: bigint, shouldWait = true): Promise<boolean> {
     let fromBlock = -1n
     const poolAddresses: string[] = []
     // a pool's blockNumber is the block whose state its cached data reflects
@@ -422,23 +419,26 @@ export class RainDataFetcher extends DataFetcher {
         if (p.processLog(log)) isNewPoolCreated = true
       })
     })
-    const results = await Promise.allSettled(
+    const final = Promise.allSettled(
       this.providers.map((p) => p.afterProcessLog(untilBlock!)),
-    )
-    results.forEach((res, i) => {
-      if (res.status === 'fulfilled') {
-        const provider = this.providers[i]
-        if (
-          provider instanceof UniswapV2BaseProvider ||
-          provider instanceof UniswapV3BaseProvider
-        ) {
-          provider.pools.forEach((pool) => {
-            // pools ahead of the requested block took no part in this round
-            if (pool.blockNumber <= untilBlock!) pool.blockNumber = untilBlock!
-          })
+    ).then((results) => {
+      results.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          const provider = this.providers[i]
+          if (
+            provider instanceof UniswapV2BaseProvider ||
+            provider instanceof UniswapV3BaseProvider
+          ) {
+            provider.pools.forEach((pool) => {
+              // pools ahead of the requested block took no part in this round
+              if (pool.blockNumber <= untilBlock!)
+                pool.blockNumber = untilBlock!
+            })
+          }
         }
-      }
+      })
     })
+    if (shouldWait) await final
     return isNewPoolCreated
   }
 

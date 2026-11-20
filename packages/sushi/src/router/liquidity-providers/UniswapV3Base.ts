@@ -408,9 +408,18 @@ export abstract class UniswapV3BaseProvider extends LiquidityProvider {
     )
   }
 
-  getStaticPools(t1: Token, t2: Token): StaticPoolUniV3[] {
+  getStaticPools(
+    t1: Token,
+    t2: Token,
+    extraPairs?: [Token, Token][],
+  ): StaticPoolUniV3[] {
     const feeList = Object.values(this.FEE).filter((v) => typeof v === 'number')
-    const currencyCombinations = getCurrencyCombinations(this.chainId, t1, t2)
+    const currencyCombinations = getCurrencyCombinations(
+      this.chainId,
+      t1,
+      t2,
+      extraPairs,
+    )
 
     const allCurrencyCombinationsWithAllFees: [Type, Type, number][] =
       currencyCombinations.reduce<[Currency, Currency, number][]>(
