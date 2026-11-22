@@ -187,7 +187,8 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
 
   /**
    * Adds the given liquidity delta to a tick of the given pool, in the word
-   * the pool holds it in, nothing when the pool does not hold that word yet.
+   * the pool holds it in, nothing when the pool does not hold that word yet
+   * or read it at or past the log's block, the word holds the delta then.
    * A word read in flight for the pool that is pinned before the log's block
    * takes the delta as well: the word it brings back replaces the live one,
    * so the delta is added back into it once it lands, see afterProcessLog
@@ -198,8 +199,11 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
     pool: UniswapV4PoolState,
     block: bigint,
   ) {
-    const ticks = pool.ticks.get(bitmapIndex(tick, pool.tickSpacing))
-    if (ticks !== undefined) addTickTo(ticks, tick, amount)
+    const word = bitmapIndex(tick, pool.tickSpacing)
+    const ticks = pool.ticks.get(word)
+    const readAt = pool.wordBlocks?.get(word)
+    if (ticks !== undefined && (readAt === undefined || block > readAt))
+      addTickTo(ticks, tick, amount)
     this.tickReads.forEach((read) => {
       if (!read.pools.has(pool.id) || block <= read.block) return
       let deltas = read.deltas.get(pool.id)
@@ -292,6 +296,8 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
             word,
           )
         pool.ticks.set(word, ticks)
+        if (!pool.wordBlocks) pool.wordBlocks = new Map()
+        pool.wordBlocks.set(word, untilBlock)
       })
     })
   }

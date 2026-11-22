@@ -146,6 +146,8 @@ export interface UniswapV4PoolState extends UniswapV4StaticPool {
   liquidity: bigint
   /** the initialized ticks of the read tick table words, sorted, by word */
   ticks: Map<number, CLTick[]>
+  /** the block each tick table word was read at, the word holds the tick changes of the logs up to it */
+  wordBlocks?: Map<number, bigint>
   lpFee: number
   protocolFee: number
   /** the swap fee in 1/1_000_000 fractions, see uniswapV4SwapFee */
@@ -636,6 +638,9 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
         activeTick: state.activeTick,
         liquidity,
         ticks,
+        wordBlocks: new Map(
+          [...ticks.keys()].map((word) => [word, blockNumber]),
+        ),
         lpFee: state.lpFee,
         protocolFee: state.protocolFee,
         swapFee: uniswapV4SwapFee(state.lpFee, state.protocolFee),

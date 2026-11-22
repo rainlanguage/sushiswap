@@ -188,6 +188,13 @@ describe('UniswapV4Provider', () => {
         [0, [{ index: 50, DLiquidity: 7n }]],
       ]),
     )
+    // every word is read at the fetch block
+    expect(state.wordBlocks).toEqual(
+      new Map([
+        [-1, 123n],
+        [0, 123n],
+      ]),
+    )
     expect(provider.tickList(state)).toEqual([
       { index: -2570, DLiquidity: 0n },
       { index: 50, DLiquidity: 7n },

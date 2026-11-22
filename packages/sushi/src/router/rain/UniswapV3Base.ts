@@ -17,6 +17,8 @@ import { RainDataFetcherOptions } from './RainDataFetcher.js'
 export interface RainV3Pool extends V3Pool {
   tickSpacing: number
   ticks: Map<number, CLTick[]>
+  /** the block each tick word was read at, the word holds the tick changes of the logs up to it */
+  wordBlocks?: Map<number, bigint>
   reserve0: bigint
   reserve1: bigint
   liquidity: bigint
@@ -223,6 +225,9 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
         reserve1: reserves[i]![1],
         liquidity: liquidity[i]!,
         ticks: ticks[i]!,
+        wordBlocks: new Map(
+          [...ticks[i]!.keys()].map((word) => [word, pool.blockNumber]),
+        ),
       })
     })
   }
@@ -307,6 +312,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
             )
           }
           pool.ticks.set(index, newTick)
+          if (!pool.wordBlocks) pool.wordBlocks = new Map()
+          pool.wordBlocks.set(index, untilBlock)
         })
       })
     } else {
@@ -760,7 +767,8 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
 
   /**
    * Adds the given liquidity delta to a tick of the given pool, in the word
-   * the pool holds it in, nothing when the pool does not hold that word yet.
+   * the pool holds it in, nothing when the pool does not hold that word yet
+   * or read it at or past the log's block, the word holds the delta then.
    * A word read in flight for the pool that is pinned before the log's block
    * takes the delta as well: the word it brings back replaces the live one,
    * so the delta is added back into it once it lands, see afterProcessLog
@@ -770,8 +778,14 @@ export abstract class UniswapV3BaseProvider extends _UniswapV3BaseProvider {
    * @param block - (optional) The block of the log the delta is of, none for a delta no read must add back
    */
   addTick(tick: number, amount: bigint, pool: RainV3Pool, block?: bigint) {
-    const ticks = pool.ticks.get(this.tickWord(tick, pool.tickSpacing))
-    if (ticks !== undefined) addTickTo(ticks, tick, amount)
+    const word = this.tickWord(tick, pool.tickSpacing)
+    const ticks = pool.ticks.get(word)
+    const readAt = pool.wordBlocks?.get(word)
+    if (
+      ticks !== undefined &&
+      (block === undefined || readAt === undefined || block > readAt)
+    )
+      addTickTo(ticks, tick, amount)
     if (block === undefined || !this.tickReads.size) return
     const address = pool.address.toLowerCase()
     this.tickReads.forEach((read) => {

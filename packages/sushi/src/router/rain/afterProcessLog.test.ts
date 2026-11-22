@@ -425,6 +425,44 @@ describe('afterProcessLog adds the logs applied during its read back', () => {
     expect(p.ticks.get(0)).toEqual([{ index: 0, DLiquidity: -5n }])
   })
 
+  it('univ3: a mint at or before the block a word was read at adds nothing to that word, one past it does', async () => {
+    const provider = new UniswapV3Provider(ChainId.BASE, client as any)
+    const p = pool()
+    provider.pools.set(POOL.toLowerCase(), p)
+    const max = bitmapIndex(NUMBER_OF_SURROUNDING_TICKS, p.tickSpacing)
+    const word = max + 1
+    const inWord = (slot: number) => (word * 256 + slot) * p.tickSpacing
+    provider.newTicksQueue.push([p, [word]])
+    multicall.mockImplementationOnce((async () => [
+      { status: 'success', result: [{ tick: inWord(5), liquidityNet: 100n }] },
+    ]) as any)
+    await provider.afterProcessLog(20n)
+    expect(p.wordBlocks?.get(word)).toBe(20n)
+    const mint = (amount: bigint, block: bigint) =>
+      provider.handlePoolEvents(
+        logOf(
+          provider.eventsAbi,
+          'Mint',
+          {
+            sender: POOL,
+            owner: POOL,
+            tickLower: inWord(5),
+            tickUpper: 0,
+            amount,
+            amount0: 0n,
+            amount1: 0n,
+          },
+          block,
+        ),
+      )
+    // a mint of the read's block that comes after the read, the word holds it
+    mint(3n, 20n)
+    expect(p.ticks.get(word)).toEqual([{ index: inWord(5), DLiquidity: 100n }])
+    // a mint past the read's block changes the word
+    mint(2n, 21n)
+    expect(p.ticks.get(word)).toEqual([{ index: inWord(5), DLiquidity: 102n }])
+  })
+
   it('univ3: a pool ahead of the round keeps its queued words for a later round', async () => {
     const provider = new UniswapV3Provider(ChainId.BASE, client as any)
     const due = pool()

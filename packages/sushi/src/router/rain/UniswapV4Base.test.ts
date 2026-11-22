@@ -381,6 +381,27 @@ describe('UniswapV4 rain provider tick words', () => {
       { index: 2610, DLiquidity: 4n },
     ])
   })
+
+  it('adds no tick change of a log at or before the block a word was read at into that word, the liquidity in range still takes it', async () => {
+    const provider = new UniswapV4Provider(ChainId.ETHEREUM, client)
+    const pool = state()
+    provider.pools.set(ID, pool)
+    provider.queueWords(pool, [1])
+    words()
+    await provider.afterProcessLog(110n)
+    expect(pool.wordBlocks?.get(1)).toBe(110n)
+    // a log of the read's block that comes after the read, the word holds it
+    provider.processLog(modify(0, 2600, 4n, 110n))
+    expect(pool.ticks.get(1)).toEqual([{ index: 2580, DLiquidity: 11n }])
+    expect(pool.liquidity).toBe(9n)
+    // a log past the read's block changes the word
+    provider.processLog(modify(0, 2600, 2n, 111n))
+    expect(pool.ticks.get(1)).toEqual([
+      { index: 2580, DLiquidity: 11n },
+      { index: 2600, DLiquidity: -2n },
+    ])
+    expect(pool.liquidity).toBe(11n)
+  })
 })
 
 describe('UniswapV4 rain provider PoolManager log read', () => {
