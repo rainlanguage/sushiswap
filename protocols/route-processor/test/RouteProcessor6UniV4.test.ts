@@ -28,7 +28,7 @@ import {
 } from 'viem'
 import { base } from 'viem/chains'
 
-import RouteProcessor6 from '../artifacts/contracts/RouteProcessor6.sol/RouteProcessor6.json' with {
+import RouteProcessor6 from '../artifacts/contracts/RouteProcessor6.sol/RouteProcessor6.json' assert {
   type: 'json',
 }
 
