@@ -33,7 +33,7 @@ import RouteProcessor6 from '../artifacts/contracts/RouteProcessor6.sol/RoutePro
 }
 
 // A fork of Base at a pinned block, run by anvil: hardhat 2.20 cannot fork
-// Base, its blocks have no totalDifficulty. Needs BASE_RPC, an archive node,
+// Base, its blocks have no totalDifficulty. Needs RPC_URL_BASE_FORK, an archive node,
 // and anvil on the PATH (or ANVIL_BIN)
 const FORK_BLOCK = 60_174_000
 const ANVIL_PORT = Number(process.env.ANVIL_PORT ?? 18545)
@@ -90,7 +90,7 @@ const createClient = () =>
     .extend(publicActions)
     .extend(walletActions)
 
-describe('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
+describe.only('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
   let anvil: ChildProcess | undefined
   let client: ReturnType<typeof createClient>
   let user: Address
@@ -99,12 +99,12 @@ describe('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
   let snapshot: Hex
 
   before(async () => {
-    if (!process.env.BASE_RPC) throw new Error('BASE_RPC is not set')
+    if (!process.env.RPC_URL_BASE_FORK) throw new Error('RPC_URL_BASE_FORK is not set')
     anvil = spawn(
       process.env.ANVIL_BIN ?? 'anvil',
       [
         '--fork-url',
-        process.env.BASE_RPC,
+        process.env.RPC_URL_BASE_FORK,
         '--fork-block-number',
         String(FORK_BLOCK),
         '--port',
@@ -130,11 +130,11 @@ describe('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
     await client.setBalance({ address: user, value: 10_000n * 10n ** 18n })
 
     // the pools as RainDataFetcher reads them at the fork block, the state the
-    // fork starts from. They are read from BASE_RPC itself, through anvil every
+    // fork starts from. They are read from RPC_URL_BASE_FORK itself, through anvil every
     // storage slot would be loaded one by one
     const reader = createPublicClient({
       chain: base,
-      transport: http(process.env.BASE_RPC),
+      transport: http(process.env.RPC_URL_BASE_FORK),
     })
     const fetcher = await RainDataFetcher.init(
       ChainId.BASE,

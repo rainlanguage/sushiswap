@@ -14,6 +14,7 @@
       devShell = pkgs.mkShell {
         nativeBuildInputs = [
           rainix.node-build-inputs.${system}
+          rainix.sol-build-inputs.${system}
           pkgs.nodePackages.pnpm
         ];
       };
