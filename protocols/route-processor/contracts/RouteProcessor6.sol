@@ -590,21 +590,24 @@ contract RouteProcessor6 is Ownable {
     UniV4CallbackData memory data = abi.decode(rawData, (UniV4CallbackData));
     BalanceDelta delta = manager.swap(data.key, data.params, data.hookData);
 
-    //TODO: Why can't we trust to deltas?
+    // the RP settles and takes the balance deltas the manager holds for it, unlock needs them at zero. The manager
+    // comes from the route, and a hook or a settleFor can change those deltas, so the checks below bind them to
+    // the swap of amountIn: the input delta is the full input and the delta of the swap, the output delta is no debt
     int256 deltaAfter0 = manager.currencyDelta(data.key.currency0, address(this));
     int256 deltaAfter1 = manager.currencyDelta(data.key.currency1, address(this));
 
+    // the swap must take the full input, a partial fill at the price limit would leave the rest on the RP
     if (data.params.zeroForOne) {
       require(
-          deltaAfter0 >= data.params.amountSpecified,
-          "deltaAfter0 is not greater than or equal to data.params.amountSpecified"
+          deltaAfter0 == data.params.amountSpecified,
+          "deltaAfter0 is not equal to data.params.amountSpecified"
       );
       require(delta.amount0() == deltaAfter0, "delta.amount0() is not equal to deltaAfter0");
       require(deltaAfter1 >= 0, "deltaAfter1 is not greater than or equal to 0");
     } else {
       require(
-          deltaAfter1 >= data.params.amountSpecified,
-          "deltaAfter1 is not greater than or equal to data.params.amountSpecified"
+          deltaAfter1 == data.params.amountSpecified,
+          "deltaAfter1 is not equal to data.params.amountSpecified"
       );
       require(delta.amount1() == deltaAfter1, "delta.amount1() is not equal to deltaAfter1");
       require(deltaAfter0 >= 0, "deltaAfter0 is not greater than or equal to 0");

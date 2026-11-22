@@ -31,6 +31,12 @@ import { base } from 'viem/chains'
 import RouteProcessor6 from '../artifacts/contracts/RouteProcessor6.sol/RouteProcessor6.json' assert {
   type: 'json',
 }
+import MockPoolManager from '../artifacts/contracts/mocks/UniV4Mocks.sol/MockPoolManager.json' assert {
+  type: 'json',
+}
+import PoolManagerSyncer from '../artifacts/contracts/mocks/UniV4Mocks.sol/PoolManagerSyncer.json' assert {
+  type: 'json',
+}
 
 // A fork of Base at a pinned block, run by anvil: hardhat 2.20 cannot fork
 // Base, its blocks have no totalDifficulty. Needs RPC_URL_BASE_FORK, an archive node,
@@ -416,5 +422,177 @@ describeOnChain('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
     expect(String((error as Error | undefined)?.message)).to.contain(
       'Expected UniV4 manager slot error',
     )
+  })
+
+  async function deploy(artifact: { abi: any; bytecode: string }) {
+    const hash = await client.deployContract({
+      account: user,
+      abi: artifact.abi,
+      bytecode: artifact.bytecode as Hex,
+      args: [],
+    })
+    return (await client.waitForTransactionReceipt({ hash })).contractAddress!
+  }
+
+  /**
+   * Swaps amountIn of from to to through the ETH and USDC V4 pool, with the
+   * PoolManager of the route replaced by a mock that gives the deltas, and
+   * with no minimum output, the mock pays out nothing
+   * @param deltas - the swap delta and the balance deltas of the RP:
+   * [swapAmount0, swapAmount1, delta0, delta1], ETH is currency0
+   * @returns the revert message, undefined when the route went through
+   */
+  async function swapOnMock(
+    from: Type,
+    to: Type,
+    amountIn: bigint,
+    deltas: [bigint, bigint, bigint, bigint],
+  ): Promise<string | undefined> {
+    const picked = pick([POOLS.v4EthUsdc005])
+    const manager = [...picked.values()][0]!.pool.address
+    const mock = await deploy(MockPoolManager)
+    const set = await client.writeContract({
+      account: user,
+      address: mock,
+      abi: MockPoolManager.abi,
+      functionName: 'setDeltas',
+      args: deltas,
+    })
+    await client.waitForTransactionReceipt({ hash: set })
+    if (!from.isNative) {
+      await setBalance(from as Token, user, amountIn)
+      const approve = await client.writeContract({
+        account: user,
+        address: from.address as Address,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [rp, amountIn],
+      })
+      await client.waitForTransactionReceipt({ hash: approve })
+    }
+    const route = Router.findBestRoute(
+      picked,
+      ChainId.BASE,
+      from,
+      amountIn,
+      to,
+      1e9,
+    )
+    const params = Router.routeProcessor6Params(
+      picked,
+      route,
+      from,
+      to,
+      user,
+      rp,
+      [],
+      1,
+    )
+    const data = (params.data as string).replace(
+      new RegExp(manager.slice(2), 'i'),
+      mock.slice(2),
+    ) as Hex
+    expect(data).not.to.equal(params.data)
+    try {
+      await client.call({ account: user, to: rp, data, value: params.value })
+    } catch (e) {
+      return String((e as Error).message)
+    }
+    return undefined
+  }
+
+  it('settles and takes the balance deltas a mock PoolManager holds for the RP when they are the swap of the full input', async () => {
+    const eth = 10n ** 18n
+    expect(await swapOnMock(ETH, USDC, eth, [-eth, 5n, -eth, 5n])).to.equal(
+      undefined,
+    )
+    const usdc = 3_000_000_000n
+    expect(await swapOnMock(USDC, ETH, usdc, [5n, -usdc, 5n, -usdc])).to.equal(
+      undefined,
+    )
+  })
+
+  it('reverts an ETH to USDC V4 leg on a partial fill, a positive input delta, a swap delta that is not the balance delta and an output debt', async () => {
+    const eth = 10n ** 18n
+    const cases: [[bigint, bigint, bigint, bigint], string][] = [
+      [
+        [-eth / 2n, 5n, -eth / 2n, 5n],
+        'deltaAfter0 is not equal to data.params.amountSpecified',
+      ],
+      [
+        [1n, 5n, 1n, 5n],
+        'deltaAfter0 is not equal to data.params.amountSpecified',
+      ],
+      [
+        [-eth + 1n, 5n, -eth, 5n],
+        'delta.amount0() is not equal to deltaAfter0',
+      ],
+      [[-eth, -1n, -eth, -1n], 'deltaAfter1 is not greater than or equal to 0'],
+    ]
+    for (const [deltas, message] of cases) {
+      expect(await swapOnMock(ETH, USDC, eth, deltas)).to.contain(message)
+    }
+  })
+
+  it('reverts a USDC to ETH V4 leg on a partial fill, a positive input delta, a swap delta that is not the balance delta and an output debt', async () => {
+    const usdc = 3_000_000_000n
+    const cases: [[bigint, bigint, bigint, bigint], string][] = [
+      [
+        [5n, -usdc / 2n, 5n, -usdc / 2n],
+        'deltaAfter1 is not equal to data.params.amountSpecified',
+      ],
+      [
+        [5n, 1n, 5n, 1n],
+        'deltaAfter1 is not equal to data.params.amountSpecified',
+      ],
+      [
+        [5n, -usdc + 1n, 5n, -usdc],
+        'delta.amount1() is not equal to deltaAfter1',
+      ],
+      [
+        [-1n, -usdc, -1n, -usdc],
+        'deltaAfter0 is not greater than or equal to 0',
+      ],
+    ]
+    for (const [deltas, message] of cases) {
+      expect(await swapOnMock(USDC, ETH, usdc, deltas)).to.contain(message)
+    }
+  })
+
+  it('settles native ETH into the PoolManager after an earlier call of the transaction left an ERC20 synced', async () => {
+    const picked = pick([POOLS.v4EthUsdc005])
+    const manager = [...picked.values()][0]!.pool.address as Address
+    const syncer = await deploy(PoolManagerSyncer)
+    const route = Router.findBestRoute(
+      picked,
+      ChainId.BASE,
+      ETH,
+      10n ** 18n,
+      USDC,
+      1e9,
+    )
+    const params = Router.routeProcessor6Params(
+      picked,
+      route,
+      ETH,
+      USDC,
+      user,
+      rp,
+    )
+    const before = await balanceOf(USDC, user)
+    // the syncer leaves USDC synced, then calls the RP in the same transaction
+    const hash = await client.writeContract({
+      account: user,
+      address: syncer,
+      abi: PoolManagerSyncer.abi,
+      functionName: 'syncThenCall',
+      args: [manager, USDC.address, rp, params.data],
+      value: params.value,
+    })
+    const receipt = await client.waitForTransactionReceipt({ hash })
+    expect(receipt.status).to.equal('success')
+    expect(
+      (await balanceOf(USDC, user)) - before >= params.amountOutMin,
+    ).to.equal(true)
   })
 })

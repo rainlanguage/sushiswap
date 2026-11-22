@@ -113,7 +113,9 @@ library PoolManagerAdditionalLibrary {
 
     function settle(IPoolManager manager, Currency currency, uint256 amount) internal {
       if (Currency.unwrap(currency) == address(0)) {
-        // This is native for UniV4
+        // This is native for UniV4. The synced currency lives for the whole transaction, an ERC20
+        // an earlier call synced and did not settle makes a settle with value revert, the native sync clears it
+        manager.sync(currency);
         manager.settle{value: amount}();
       } else {
           manager.sync(currency);

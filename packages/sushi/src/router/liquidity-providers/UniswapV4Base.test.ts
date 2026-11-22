@@ -8,6 +8,7 @@ import { ChainId } from '../../chain/index.js'
 import { Native, Token } from '../../currency/index.js'
 import { RToken, UniV4Pool } from '../../tines/index.js'
 import { UniV4PoolCode } from '../pool-codes/index.js'
+import type { RainDataFetcherOptions } from '../rain/RainDataFetcher.js'
 import { Router } from '../router.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 import { UniswapV4Provider } from './UniswapV4.js'
@@ -230,9 +231,12 @@ describe('UniswapV4Provider', () => {
       blockNumber: 123n,
     })
     multicall.mockClear()
-    await provider.fetchPoolsForToken(WETH, USDC, undefined, {
+    // the provider takes DataFetcherOptions, ignoreCache is a RainDataFetcher option
+    const options: RainDataFetcherOptions = {
       blockNumber: 124n,
-    })
+      ignoreCache: false,
+    }
+    await provider.fetchPoolsForToken(WETH, USDC, undefined, options)
     const read = (multicall.mock.calls[0]![0] as any).contracts.map(
       (c: any) => c.args[0],
     )
