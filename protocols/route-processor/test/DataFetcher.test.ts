@@ -46,11 +46,13 @@ async function testDF(
       console.log(
         `          ${p.getPoolProviderName()} pools: ${poolCodes.length}`,
       )
-    // ignore non uni protocol based dexes
+    // ignore non uni protocol based dexes, and Uniswap V4: its pools of
+    // these pairs are not on every chain it is on
     if (
       dexName !== LiquidityProviders.Trident &&
       dexName !== LiquidityProviders.CurveSwap &&
-      dexName !== LiquidityProviders.NativeWrap
+      dexName !== LiquidityProviders.NativeWrap &&
+      dexName !== LiquidityProviders.UniswapV4
     )
       dexPools[dexName] = poolCodes.length
   })
@@ -85,8 +87,13 @@ function findRoute(
   liquidityProviders?: LiquidityProviders[],
 ): boolean {
   try {
-    // find the best route map
-    const pcMap = dataFetcher.getCurrentPoolCodeMap(fromToken, toToken)
+    // find the best route map, without the Uniswap V4 pools: the rp4
+    // encoder cannot code them
+    const pcMap = new Map(
+      [...dataFetcher.getCurrentPoolCodeMap(fromToken, toToken)].filter(
+        ([, pc]) => pc.liquidityProvider !== LiquidityProviders.UniswapV4,
+      ),
+    )
     const route = Router.findBestRoute(
       pcMap,
       chainId,

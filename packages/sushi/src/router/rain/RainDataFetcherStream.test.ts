@@ -13,6 +13,7 @@ import {
   numberToHex,
   parseAbiItem,
   toEventSelector,
+  zeroAddress,
 } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChainId } from '../../chain/constants.js'
@@ -20,6 +21,8 @@ import { Token } from '../../currency/index.js'
 import { AerodromeSlipstreamProvider } from '../liquidity-providers/AerodromeSlipstream.js'
 import { UniswapV2Provider } from '../liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from '../liquidity-providers/UniswapV3.js'
+import { UniswapV4Provider } from '../liquidity-providers/UniswapV4.js'
+import type { UniswapV4PoolState } from '../liquidity-providers/UniswapV4Base.js'
 import { RainDataFetcher } from './RainDataFetcher.js'
 import {
   RainDataFetcherStream,
@@ -29,6 +32,7 @@ import {
 } from './RainDataFetcherStream.js'
 import { RainV2Pool, UniV2EventsAbi } from './UniswapV2Base.js'
 import { RainV3Pool, UniV3EventsAbi } from './UniswapV3Base.js'
+import { UniswapV4EventsAbi } from './UniswapV4Base.js'
 import {
   DEFAULT_FEE_CONFIG,
   FeeType,
@@ -62,6 +66,12 @@ const POOL_C = '0xcccccccccccccccccccccccccccccccccccccccc' as Address
 const POOL_D = '0xdddddddddddddddddddddddddddddddddddddddd' as Address
 const FEE_MODULE = '0xfeefeefeefeefeefeefeefeefeefeefeefeefee0' as Address
 const NEW_MODULE = '0xfeefeefeefeefeefeefeefeefeefeefeefeefee1' as Address
+/** Uniswap V4 pool ids */
+const V4_A = `0x${'a4'.repeat(32)}` as Hex
+const V4_B = `0x${'b4'.repeat(32)}` as Hex
+const V4_C = `0x${'c4'.repeat(32)}` as Hex
+const V4_D = `0x${'d4'.repeat(32)}` as Hex
+const V4_INITIALIZE = toEventSelector(UniswapV4EventsAbi[0])
 
 const EVENTS = {
   swap: parseAbiItem(
@@ -86,6 +96,9 @@ const EVENTS = {
   poolCreated: parseAbiItem(
     'event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)',
   ),
+  v4Initialize: UniswapV4EventsAbi[0],
+  v4Swap: UniswapV4EventsAbi[1],
+  v4ModifyLiquidity: UniswapV4EventsAbi[2],
 }
 
 let nextTx = 1
@@ -207,6 +220,28 @@ const v3Pool = (address: Address, blockNumber: bigint) =>
     blockNumber,
   }) as unknown as RainV3Pool
 
+/** a native ETH and USDC Uniswap V4 pool object as a provider fetch writes it */
+const v4Pool = (id: Hex, blockNumber: bigint) =>
+  ({
+    id,
+    currency0: zeroAddress,
+    currency1: USDC.address.toLowerCase(),
+    fee: 500,
+    tickSpacing: 10,
+    hooks: zeroAddress,
+    token0: { address: '', symbol: 'ETH', decimals: 18, chainId: ChainId.BASE },
+    token1: USDC,
+    sqrtPriceX96: 2n * 2n ** 96n,
+    tick: 0,
+    activeTick: 0,
+    liquidity: 1n,
+    ticks: new Map(),
+    lpFee: 500,
+    protocolFee: 0,
+    swapFee: 500,
+    blockNumber,
+  }) as unknown as UniswapV4PoolState
+
 type ParentFetch = (
   t0: unknown,
   t1: unknown,
@@ -229,9 +264,10 @@ beforeEach(() => {
 /**
  * a stream fetcher with one univ3 pool (A, block 10) and one univ2 pool
  * (B, block 12), no rpc: the ws subscribe, the head and the log read are
- * mocks. the read client's head follows the fed heads, less a lag
+ * mocks. the read client's head follows the fed heads, less a lag. With v4
+ * a Uniswap V4 provider holds the pool V4_A at block 10
  */
-function setup(options: { slipstream?: boolean } = {}) {
+function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
   const v3 = new UniswapV3Provider(ChainId.BASE, client)
   const v2 = new UniswapV2Provider(ChainId.BASE, client)
   // the follow up reads are rpc calls, the tests check they are asked
@@ -271,9 +307,27 @@ function setup(options: { slipstream?: boolean } = {}) {
   } as unknown as RainV2Pool
   v3.pools.set(POOL_A, poolA)
   v2.pools.set(POOL_B, poolB)
+  const v4 = new UniswapV4Provider(ChainId.BASE, client)
+  v4.afterProcessLog = vi.fn(async () => {})
+  const manager = v4.getPoolManager().toLowerCase() as Address
+  const poolV4 = v4Pool(V4_A, 10n)
+  v4.pools.set(V4_A, poolV4)
   const fetcher = new RainDataFetcherStream(ChainId.BASE, client)
   // the logs the read serves, filtered by the asked range and addresses
   const readable: Log[] = []
+  // the PoolManager logs of the given ids, an Initialize log comes with the
+  // factory logs
+  v4.getPoolManagerLogs = vi.fn(
+    async (ids: string[], fromBlock: bigint, toBlock: bigint) =>
+      readable.filter(
+        (log) =>
+          log.blockNumber! >= fromBlock &&
+          log.blockNumber! <= toBlock &&
+          log.address.toLowerCase() === manager &&
+          log.topics[0] !== V4_INITIALIZE &&
+          ids.includes(log.topics[1]!),
+      ),
+  )
   let failReads = 0
   let failSliceFrom: bigint | undefined
   let holdReads: ((value: Log[]) => void)[] | undefined
@@ -290,7 +344,10 @@ function setup(options: { slipstream?: boolean } = {}) {
       (log) =>
         log.blockNumber! >= args.fromBlock &&
         log.blockNumber! <= args.toBlock &&
-        args.address.includes(log.address.toLowerCase()),
+        args.address.includes(log.address.toLowerCase()) &&
+        // of the PoolManager events only the Initialize is in the read's events
+        (log.address.toLowerCase() !== manager ||
+          log.topics[0] === V4_INITIALIZE),
     )
     if (holdReads)
       return new Promise<Log[]>((r) => holdReads!.push(() => r(logs)))
@@ -299,12 +356,18 @@ function setup(options: { slipstream?: boolean } = {}) {
   const chain = { head: 15n, lag: 0n }
   const getBlockNumber = vi.fn(async () => chain.head - chain.lag)
   Object.assign(fetcher, {
-    providers: options.slipstream ? [v3, v2, slip] : [v3, v2],
+    providers: [
+      v3,
+      v2,
+      ...(options.slipstream ? [slip] : []),
+      ...(options.v4 ? [v4] : []),
+    ],
     web3Client: { getBlockNumber, getLogs },
     eventsAbi: [
       ...UniV3EventsAbi,
       ...UniV2EventsAbi,
       ...(options.slipstream ? (slip.eventsAbi as any[]) : []),
+      ...(options.v4 ? v4.eventsAbi : []),
     ],
     factories: [
       v3.factory[ChainId.BASE]!.toLowerCase(),
@@ -312,6 +375,7 @@ function setup(options: { slipstream?: boolean } = {}) {
       ...(options.slipstream
         ? [slip.factory[ChainId.BASE]!.toLowerCase()]
         : []),
+      ...(options.v4 ? [manager] : []),
     ],
   })
   const unsubscribe = vi.fn(async () => true)
@@ -321,8 +385,11 @@ function setup(options: { slipstream?: boolean } = {}) {
     return { subscriptionId: `0x${subs.length}`, unsubscribe }
   })
   const wsClient = { transport: { subscribe } } as any
+  /** a V4 logs subscription filters by the pool ids in topic 1 */
+  const isV4 = (s: Sub) => s.params[1]?.topics?.length === 2
   const last = (kind: 'newHeads' | 'newFlashblocks' | 'logs' | 'pendingLogs') =>
-    [...subs].reverse().find((s) => s.params[0] === kind)!
+    [...subs].reverse().find((s) => s.params[0] === kind && !isV4(s))!
+  const lastV4 = () => [...subs].reverse().find(isV4)!
   /** feeds a sealed head: a newHeads frame, or with flashblocks the first flashblock of the next block */
   const feedHead = (number: bigint) => {
     if (number > chain.head) chain.head = number
@@ -336,6 +403,8 @@ function setup(options: { slipstream?: boolean } = {}) {
   }
   const feedLog = (raw: RpcLog, kind: 'logs' | 'pendingLogs' = 'logs') =>
     last(kind).onData({ result: raw })
+  /** a log of the V4 logs subscription */
+  const feedV4Log = (raw: RpcLog) => lastV4().onData({ result: raw })
   /** the log is served by the read as well, as the node would */
   const readable_ = (raw: RpcLog) => {
     readable.push(formatLog(raw) as Log)
@@ -392,8 +461,11 @@ function setup(options: { slipstream?: boolean } = {}) {
     fetcher,
     v3,
     v2,
+    v4,
+    manager,
     poolA,
     poolB,
+    poolV4,
     readable,
     readable_,
     getLogs,
@@ -406,6 +478,8 @@ function setup(options: { slipstream?: boolean } = {}) {
     feedHead,
     last,
     feedLog,
+    lastV4,
+    feedV4Log,
     slowSubscribe,
     writesC,
     writesD,
@@ -2702,5 +2776,574 @@ describe('RainDataFetcherStream.updatePools and stop', () => {
     expect(s.fetcher.complete.size).toBe(0)
     expect(s.fetcher.applied.size).toBe(0)
     await s.fetcher.stop()
+  })
+})
+
+describe('RainDataFetcherStream Uniswap V4 pools', () => {
+  /** a Swap of the pool with the given swapper deltas, it sets the liquidity to 7 */
+  const v4Swap = (
+    manager: Address,
+    id: Hex,
+    amount0: bigint,
+    amount1: bigint,
+    blockNumber: bigint,
+    index = 0,
+  ) =>
+    rawLog(
+      manager,
+      EVENTS.v4Swap,
+      {
+        id,
+        sender: manager,
+        amount0,
+        amount1,
+        sqrtPriceX96: 3n * 2n ** 96n,
+        liquidity: 7n,
+        tick: 0,
+        fee: 500,
+      },
+      blockNumber,
+      { index },
+    )
+  /** a ModifyLiquidity around the current tick, it adds the delta to the liquidity */
+  const v4Modify = (
+    manager: Address,
+    id: Hex,
+    liquidityDelta: bigint,
+    blockNumber: bigint,
+  ) =>
+    rawLog(
+      manager,
+      EVENTS.v4ModifyLiquidity,
+      {
+        id,
+        sender: manager,
+        tickLower: -10,
+        tickUpper: 10,
+        liquidityDelta,
+        salt: `0x${'0'.repeat(64)}`,
+      },
+      blockNumber,
+    )
+  const v4Initialize = (
+    manager: Address,
+    id: Hex,
+    blockNumber: bigint,
+    index = 0,
+  ) =>
+    rawLog(
+      manager,
+      EVENTS.v4Initialize,
+      {
+        id,
+        currency0: zeroAddress,
+        currency1: USDC.address,
+        fee: 500,
+        tickSpacing: 10,
+        hooks: zeroAddress,
+        sqrtPriceX96: 2n ** 96n,
+        tick: 0,
+      },
+      blockNumber,
+      { index },
+    )
+
+  it('takes the Initialize logs on the logs subscription, the PoolManager is a factory, and the cached V4 pools by id on a second one', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const [, filter] = s.last('logs').params
+    expect(filter.address).toEqual([...s.fetcher.factories, POOL_A, POOL_B])
+    expect(s.fetcher.factories).toContain(s.manager)
+    expect(filter.topics[0]).toContain(V4_INITIALIZE)
+    expect(filter.topics[0]).not.toContain(
+      toEventSelector(UniswapV4EventsAbi[1]),
+    )
+    expect(s.lastV4().params).toEqual([
+      'logs',
+      { address: [s.manager], topics: [s.v4.updateTopics, [V4_A]] },
+    ])
+    expect(s.fetcher.subscribed).toEqual(new Set([POOL_A, POOL_B]))
+    expect(s.fetcher.subscribedIds).toEqual(new Set([V4_A]))
+    expect(s.fetcher.admitted.get(V4_A)).toBe(s.poolV4)
+    // no V4 pool cached, no V4 subscription
+    const none = setup({ v4: true })
+    none.v4.pools.clear()
+    await started(none)
+    expect(none.lastV4()).toBeUndefined()
+    expect(none.fetcher.v4Subscription).toBeUndefined()
+  })
+
+  it('reads the gap of a V4 pool by its id, then applies the logs of the V4 subscription', async () => {
+    const s = setup({ v4: true })
+    s.readable_(v4Modify(s.manager, V4_A, 5n, 12n))
+    await started(s)
+    expect(s.v4.getPoolManagerLogs).toHaveBeenCalledWith([V4_A], 11n, 17n)
+    // the address read has the PoolManager as a factory, and no V4 id
+    expect(s.getLogs.mock.calls[0]![0].address).toEqual([
+      ...s.fetcher.factories,
+      POOL_A,
+      POOL_B,
+    ])
+    expect(s.poolV4.liquidity).toBe(6n)
+    expect(s.fetcher.complete.get(V4_A)).toBe(17n)
+    s.feedV4Log(v4Swap(s.manager, V4_A, -5n, 3n, 18n))
+    expect(s.poolV4.sqrtPriceX96).toBe(3n * 2n ** 96n)
+    expect(s.poolV4.liquidity).toBe(7n)
+    expect(s.fetcher.held).toEqual([])
+  })
+
+  it('reports the Initialize of a null V4 pool as a created pool, from a gap read and from the stream', async () => {
+    const s = setup({ v4: true })
+    s.v4.nullPools.set(V4_B, 1)
+    s.v4.nullPools.set(V4_C, 1)
+    // the address read serves it, with the factory logs
+    s.readable_(v4Initialize(s.manager, V4_C, 12n))
+    const onPoolCreated = vi.fn()
+    const starting = s.fetcher.start(s.wsClient, {
+      resubscribeDelay: 1,
+      stallTimeout: 0,
+      onPoolCreated,
+    })
+    await tick()
+    s.feedHead(15n + STREAM_HEAD_MARGIN)
+    await starting
+    await tick()
+    expect(s.v4.nullPools.has(V4_C)).toBe(false)
+    expect(onPoolCreated).toHaveBeenCalledTimes(1)
+    // D is no null pool, its Initialize creates nothing
+    s.feedLog(v4Initialize(s.manager, V4_D, 18n, 1))
+    await tick()
+    expect(onPoolCreated).toHaveBeenCalledTimes(1)
+    s.feedLog(v4Initialize(s.manager, V4_B, 18n))
+    await tick()
+    expect(s.v4.nullPools.has(V4_B)).toBe(false)
+    expect(onPoolCreated).toHaveBeenCalledTimes(2)
+    // an Initialize is about the PoolManager, as a PoolCreated is about its factory
+    expect(s.fetcher.applied.get(s.manager)?.get(18n)?.size).toBe(2)
+  })
+
+  it('parks the queued words of a held V4 pool during a follow up, they are read once its hold lifts', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const seen: string[][] = []
+    s.v4.afterProcessLog = vi.fn(async () => {
+      seen.push(s.v4.newTicksQueue.map(([pool]) => pool.id))
+    })
+    // B is fetched at 17 with the head at 1100, its read brings a Swap that
+    // queues B's words
+    s.feedHead(1100n)
+    await tick()
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    expect(s.fetcher.gaps[0]!.readyAt).toBe(1102n)
+    s.readable_(v4Swap(s.manager, V4_B, -5n, 3n, 18n))
+    // the second slice fails: the read stops short of 1102, B stays held
+    s.failSlice(1018n)
+    s.feedHead(1102n)
+    await tick()
+    expect(s.fetcher.complete.get(V4_B)).toBe(1017n)
+    expect(s.fetcher.holding).toEqual(new Set([V4_B]))
+    expect(s.v4.newTicksQueue.map(([pool]) => pool.id)).toEqual([V4_B])
+    // the head's follow up runs for the provider the read's Swap touched, B's
+    // words wait, the retry read lands after it and lifts the hold
+    s.feedHead(1103n)
+    await tick()
+    expect(seen).toEqual([[]])
+    expect(s.fetcher.holding.size).toBe(0)
+    expect(s.v4.newTicksQueue.map(([pool]) => pool.id)).toEqual([V4_B])
+    // the next head reads them
+    s.feedHead(1104n)
+    await tick()
+    expect(seen).toEqual([[], [V4_B]])
+  })
+
+  it('leaves out of the restore the parked words of a V4 pool object a fetch replaced meanwhile', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    s.feedHead(1100n)
+    await tick()
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    s.readable_(v4Swap(s.manager, V4_B, -5n, 3n, 18n))
+    // the read stops short, B stays held with its words queued
+    s.failSlice(1018n)
+    s.feedHead(1102n)
+    await tick()
+    const parked = s.v4.pools.get(V4_B)!
+    expect(s.v4.newTicksQueue.map(([pool]) => pool)).toEqual([parked])
+    // a fetch puts a new object of B in place while its words are parked
+    s.v4.afterProcessLog = vi.fn(async () => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, 1102n))
+    })
+    s.feedHead(1103n)
+    await tick()
+    expect(s.v4.afterProcessLog).toHaveBeenCalled()
+    expect(s.v4.pools.get(V4_B)).not.toBe(parked)
+    expect(s.v4.newTicksQueue).toEqual([])
+  })
+
+  it('resubscribes for a pool fetched again after a reset, V2/V3 and V4 alike', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    s.fetcher.reset()
+    expect(s.fetcher.subscribed.size).toBe(0)
+    expect(s.fetcher.subscribedIds.size).toBe(0)
+    const subsBefore = s.subs.length
+    // the reset cleared the pools, a fetch writes A and V4_A again
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v3.pools.set(POOL_A, v3Pool(POOL_A, options.blockNumber))
+      s.v4.pools.set(V4_A, v4Pool(V4_A, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    // both logs subscriptions are replaced and take the pools again
+    expect(s.subs.length).toBe(subsBefore + 2)
+    expect(s.fetcher.subscribed).toEqual(new Set([POOL_A]))
+    expect(s.fetcher.subscribedIds).toEqual(new Set([V4_A]))
+  })
+
+  it('hands a live V4 swap on with the direction off the swapper deltas, by the pool id', async () => {
+    const s = setup({ v4: true })
+    const onPoolChange = vi.fn()
+    const starting = s.fetcher.start(s.wsClient, {
+      resubscribeDelay: 1,
+      stallTimeout: 0,
+      onPoolChange,
+    })
+    await tick()
+    s.feedHead(15n + STREAM_HEAD_MARGIN)
+    await starting
+    // the swapper paid token0 and got token1, the pool received token0
+    s.feedV4Log(v4Swap(s.manager, V4_A, -5n, 3n, 18n))
+    s.feedV4Log(v4Swap(s.manager, V4_A, 5n, -3n, 18n, 1))
+    expect(onPoolChange.mock.calls.map((c: any[]) => [c[0], c[2]])).toEqual([
+      [V4_A, true],
+      [V4_A, false],
+    ])
+  })
+
+  it('covers a fetched V4 pool with a new V4 subscription and reads its gap by its id', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const subsBefore = s.subs.length
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    ;(s.v4.getPoolManagerLogs as any).mockClear()
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    expect(s.fetcher.holding).toEqual(new Set([V4_B]))
+    await tick()
+    // both logs subscriptions are replaced, the V4 one takes the new id, and
+    // the read waits for the margin past the head they were up at
+    expect(s.subs.length).toBe(subsBefore + 2)
+    expect(s.lastV4().params[1].topics[1]).toEqual([V4_A, V4_B])
+    expect(s.fetcher.subscribedIds).toEqual(new Set([V4_A, V4_B]))
+    expect(s.fetcher.gaps[0]!.readyAt).toBe(17n + STREAM_HEAD_MARGIN)
+    s.feedV4Log(s.readable_(v4Modify(s.manager, V4_B, 5n, 18n)))
+    expect(s.fetcher.held.length).toBe(1)
+    s.feedHead(19n)
+    await tick()
+    expect(s.v4.getPoolManagerLogs).toHaveBeenCalledWith([V4_B], 18n, 19n)
+    // the read applies the ModifyLiquidity, its replay is skipped
+    expect(s.v4.pools.get(V4_B)!.liquidity).toBe(6n)
+    expect(s.fetcher.holding.size).toBe(0)
+    expect(s.fetcher.held).toEqual([])
+  })
+
+  it('drops all three subscriptions on an error of the V4 one, the reopen reads the V4 pools and the Initialize logs it missed', async () => {
+    const s = setup({ v4: true })
+    s.v4.nullPools.set(V4_C, 1)
+    const onPoolCreated = vi.fn()
+    const starting = s.fetcher.start(s.wsClient, {
+      resubscribeDelay: 1,
+      stallTimeout: 0,
+      onPoolCreated,
+    })
+    await tick()
+    s.feedHead(15n + STREAM_HEAD_MARGIN)
+    await starting
+    s.feedHead(20n)
+    expect(s.fetcher.complete.get(V4_A)).toBe(18n)
+    const before = s.subs.length
+    const dropped = s.lastV4()
+    dropped.onError(new Error('socket closed'))
+    expect(s.fetcher.drops).toBe(1)
+    expect(s.fetcher.holdingAll).toBe(true)
+    expect(s.unsubscribe).toHaveBeenCalledTimes(3)
+    expect(s.fetcher.v4Subscription).toBeUndefined()
+    await tick()
+    // reopened: heads, logs and V4 logs
+    expect(s.subs.length).toBe(before + 3)
+    expect(s.lastV4()).not.toBe(dropped)
+    expect(s.fetcher.gaps).toEqual([{ pools: undefined, readyAt: 22n }])
+    // missed while down, served by the read
+    s.readable_(v4Modify(s.manager, V4_A, 5n, 19n))
+    s.readable_(v4Initialize(s.manager, V4_C, 21n))
+    s.feedHead(22n)
+    await tick()
+    expect(s.v4.getPoolManagerLogs).toHaveBeenLastCalledWith([V4_A], 19n, 22n)
+    expect(s.poolV4.liquidity).toBe(6n)
+    expect(s.v4.nullPools.has(V4_C)).toBe(false)
+    expect(onPoolCreated).toHaveBeenCalledTimes(1)
+    expect(s.fetcher.holdingAll).toBe(false)
+    // an error of the dropped V4 subscription is not another drop
+    dropped.onError(new Error('late'))
+    expect(s.fetcher.drops).toBe(1)
+  })
+
+  it('drops the stream when the V4 subscribe fails, the logs subscription that came up beside it goes too', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // the next V4 subscribe is rejected, the logs subscription beside it comes up
+    const ok = s.subscribe.getMockImplementation()!
+    const leaked = {
+      subscriptionId: '0xleaked',
+      unsubscribe: vi.fn(async () => true),
+    }
+    let leakedArgs: Sub | undefined
+    let failing = true
+    s.subscribe.mockImplementation(async (args: Sub) => {
+      if (!failing) return ok(args)
+      if (args.params[1]?.topics?.length === 2) {
+        failing = false
+        throw new Error('too many topic values')
+      }
+      leakedArgs = args
+      return leaked
+    })
+    // a new V4 pool asks for a new V4 subscription
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await waitFor(() => s.fetcher.drops === 1)
+    expect(s.fetcher.lastError).toMatchObject({
+      message: 'too many topic values',
+    })
+    expect(leaked.unsubscribe).toHaveBeenCalledTimes(1)
+    expect(s.fetcher.subscription).not.toBe(leaked)
+    expect(warn).toHaveBeenCalledWith(
+      'pools stream logs subscription came up but the Uniswap V4 logs one failed, it is dropped, message: too many topic values',
+    )
+    warn.mockRestore()
+    // the stream opens again after the delay, with both logs subscriptions
+    await waitFor(() => s.fetcher.open)
+    expect(s.fetcher.drops).toBe(1)
+    expect(s.fetcher.v4Subscription).toBeDefined()
+    expect(s.lastV4().params[1].topics[1]).toEqual([V4_A, V4_B])
+    // once the reopen's read is done, a frame of the dropped subscription is
+    // not applied, the same log through the current one is
+    s.feedHead(17n + STREAM_HEAD_MARGIN)
+    await waitFor(() => !s.fetcher.holdingAll)
+    leakedArgs!.onData({ result: swap(POOL_A, 9n * 2n ** 96n, 20n) })
+    expect(s.poolA.sqrtPriceX96).not.toBe(9n * 2n ** 96n)
+    s.feedLog(swap(POOL_A, 9n * 2n ** 96n, 20n))
+    expect(s.poolA.sqrtPriceX96).toBe(9n * 2n ** 96n)
+  })
+
+  it('applies the frames of a logs subscription that came up while the V4 subscribe does not answer, the drop takes it down with a warning', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // the next V4 subscribe never answers, the logs subscription beside it comes up
+    const ok = s.subscribe.getMockImplementation()!
+    const leaked = {
+      subscriptionId: '0xleaked',
+      unsubscribe: vi.fn(async () => true),
+    }
+    let leakedArgs: Sub | undefined
+    let hanging = true
+    s.subscribe.mockImplementation((args: Sub) => {
+      if (!hanging) return ok(args)
+      if (args.params[1]?.topics?.length === 2) {
+        hanging = false
+        return new Promise(() => {})
+      }
+      leakedArgs = args
+      return Promise.resolve(leaked)
+    })
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    // it is not current, but while it waits its frames apply
+    expect(s.fetcher.subscription).not.toBe(leaked)
+    leakedArgs!.onData({ result: swap(POOL_A, 9n * 2n ** 96n, 18n) })
+    expect(s.poolA.sqrtPriceX96).toBe(9n * 2n ** 96n)
+    // a drop, the stall timeout's in production, takes it down
+    s.last('newHeads').onError(new Error('no answer'))
+    expect(s.fetcher.drops).toBe(1)
+    expect(leaked.unsubscribe).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      'pools stream logs subscription came up while the other one had not answered yet, it is dropped',
+    )
+    warn.mockRestore()
+    // the stream opens again after the delay, with both logs subscriptions
+    await waitFor(() => s.fetcher.open)
+    expect(s.fetcher.v4Subscription).toBeDefined()
+    expect(s.lastV4().params[1].topics[1]).toEqual([V4_A, V4_B])
+    // once the reopen's read is done, a frame of the dropped subscription is
+    // not applied, the same log through the current one is
+    s.feedHead(17n + STREAM_HEAD_MARGIN)
+    await waitFor(() => !s.fetcher.holdingAll)
+    leakedArgs!.onData({ result: swap(POOL_A, 11n * 2n ** 96n, 20n) })
+    expect(s.poolA.sqrtPriceX96).toBe(9n * 2n ** 96n)
+    s.feedLog(swap(POOL_A, 11n * 2n ** 96n, 20n))
+    expect(s.poolA.sqrtPriceX96).toBe(11n * 2n ** 96n)
+  })
+
+  it('drops at once a logs subscription that answers after the drop, its frames and errors are ignored', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // the next logs subscribe answers only once released, the V4 one never
+    const ok = s.subscribe.getMockImplementation()!
+    const late = {
+      subscriptionId: '0xlate',
+      unsubscribe: vi.fn(async () => true),
+    }
+    let lateArgs: Sub | undefined
+    let answer!: () => void
+    let first = true
+    s.subscribe.mockImplementation((args: Sub) => {
+      if (!first) return ok(args)
+      if (args.params[1]?.topics?.length === 2) {
+        first = false
+        return new Promise(() => {})
+      }
+      lateArgs = args
+      return new Promise((r) => {
+        answer = () => r(late)
+      })
+    })
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    // a drop while neither subscribe has answered, nothing came up
+    s.last('newHeads').onError(new Error('socket closed'))
+    expect(s.fetcher.drops).toBe(1)
+    await waitFor(() => s.fetcher.open)
+    // the old logs subscribe answers in the reopened stream
+    answer()
+    await tick()
+    expect(late.unsubscribe).toHaveBeenCalledTimes(1)
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('came up while the other one'),
+    )
+    warn.mockRestore()
+    s.feedHead(17n + STREAM_HEAD_MARGIN)
+    await waitFor(() => !s.fetcher.holdingAll)
+    lateArgs!.onData({ result: swap(POOL_A, 9n * 2n ** 96n, 20n) })
+    expect(s.poolA.sqrtPriceX96).not.toBe(9n * 2n ** 96n)
+    lateArgs!.onError(new Error('late'))
+    expect(s.fetcher.drops).toBe(1)
+    // the same log through the current subscription applies
+    s.feedLog(swap(POOL_A, 9n * 2n ** 96n, 20n))
+    expect(s.poolA.sqrtPriceX96).toBe(9n * 2n ** 96n)
+  })
+
+  it('warns once when the socket closes with a logs subscription up and the V4 subscribe pending', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ok = s.subscribe.getMockImplementation()!
+    let fail!: (e: unknown) => void
+    let upArgs: Sub | undefined
+    let first = true
+    s.subscribe.mockImplementation((args: Sub) => {
+      if (!first) return ok(args)
+      if (args.params[1]?.topics?.length === 2) {
+        first = false
+        return new Promise((_, reject) => {
+          fail = reject
+        })
+      }
+      upArgs = args
+      return Promise.resolve({
+        subscriptionId: '0xup',
+        unsubscribe: vi.fn(async () => true),
+      })
+    })
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    // the close fails the pending request first, then the subscriptions, as
+    // the viem socket does
+    fail(new Error('socket closed'))
+    upArgs!.onError(new Error('socket closed'))
+    await tick()
+    expect(s.fetcher.drops).toBe(1)
+    const told = warn.mock.calls.filter(([message]) =>
+      String(message).includes('came up'),
+    )
+    expect(told).toEqual([
+      [
+        'pools stream logs subscription came up while the other one had not answered yet, it is dropped',
+      ],
+    ])
+    warn.mockRestore()
+  })
+
+  it('applies a log the new logs subscription serves while the V4 subscribe has not answered, the copy on the old one is skipped', async () => {
+    const s = setup({ v4: true })
+    await started(s)
+    const old = s.last('logs')
+    // the next V4 subscribe answers only once released
+    const ok = s.subscribe.getMockImplementation()!
+    let release!: () => void
+    s.subscribe.mockImplementation((args: Sub) => {
+      if (args.params[1]?.topics?.length !== 2) return ok(args)
+      return new Promise((r) => {
+        release = () => r(ok(args))
+      })
+    })
+    parentImpls.push((_t0, _t1, _e, options) => {
+      s.v4.pools.set(V4_B, v4Pool(V4_B, options.blockNumber))
+    })
+    await s.fetcher.fetchPoolsForToken(WETH, USDC, undefined, {
+      blockNumber: 17n,
+    })
+    await tick()
+    const fresh = s.last('logs')
+    expect(fresh).not.toBe(old)
+    // the node serves a Mint of A on the new logs subscription first
+    const raw = mint(POOL_A, 5n, 18n)
+    fresh.onData({ result: raw })
+    expect(s.poolA.liquidity).toBe(6n)
+    // the V4 subscribe answers and the stream switches, the copy on the old
+    // logs subscription comes after the switch and is skipped
+    release()
+    await tick()
+    expect(s.fetcher.v4Subscription).toBeDefined()
+    old.onData({ result: raw })
+    expect(s.poolA.liquidity).toBe(6n)
   })
 })

@@ -1,4 +1,4 @@
-import { ParseAbiItem, PublicClient, toEventSignature } from 'viem'
+import { Log, ParseAbiItem, PublicClient, toEventSignature } from 'viem'
 import { ChainId } from '../../chain/constants.js'
 import { Type } from '../../currency/index.js'
 import { MultiRoute } from '../../tines/Graph.js'
@@ -85,6 +85,7 @@ import { TraderJoeProvider } from '../liquidity-providers/TraderJoe.js'
 import { UbeSwapProvider } from '../liquidity-providers/UbeSwap.js'
 import { UniswapV2Provider } from '../liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from '../liquidity-providers/UniswapV3.js'
+import { UniswapV4Provider } from '../liquidity-providers/UniswapV4.js'
 import { UpV3Provider } from '../liquidity-providers/UpV3Provider.js'
 import { VVSFlawlessProvider } from '../liquidity-providers/VVSFlawless.js'
 import { VVSStandardProvider } from '../liquidity-providers/VVSStandard.js'
@@ -99,6 +100,7 @@ import { PoolCode } from '../pool-codes/PoolCode.js'
 import { PoolFilter, Router } from '../router.js'
 import { UniswapV2BaseProvider } from './UniswapV2Base.js'
 import { UniswapV3BaseProvider } from './UniswapV3Base.js'
+import { UniswapV4BaseProvider } from './UniswapV4Base.js'
 import { VelodromeSlipstreamBaseProvider } from './VelodromeSlipstreamBase.js'
 
 // options for data fetching, such as pinning block number and memoize
@@ -112,6 +114,7 @@ export interface RainDataFetcherOptions extends DataFetcherOptions {
 export class RainDataFetcher extends DataFetcher {
   initBlockNumber = -1n
   eventsAbi: ParseAbiItem<any>[] = []
+  /** the lowercase factory addresses, a Uniswap V4 PoolManager among them, their logs tell the new pools */
   factories: string[] = []
 
   /**
@@ -228,6 +231,7 @@ export class RainDataFetcher extends DataFetcher {
       UbeSwapProvider,
       UniswapV2Provider,
       UniswapV3Provider,
+      UniswapV4Provider,
       VelodromeSlipstreamProvider,
       VelodromeSlipstreamV2Provider,
       UpV3Provider,
@@ -286,6 +290,13 @@ export class RainDataFetcher extends DataFetcher {
             this.factories.push(factory)
           }
         }
+        // a Uniswap V4 PoolManager is read as a factory, for its Initialize logs
+        if (provider instanceof UniswapV4BaseProvider) {
+          const factory = provider.getPoolManager().toLowerCase()
+          if (!this.factories.includes(factory)) {
+            this.factories.push(factory)
+          }
+        }
       }
     }
   }
@@ -338,10 +349,33 @@ export class RainDataFetcher extends DataFetcher {
         }
       }
     })
+    // a Uniswap V4 pool lives in one PoolManager and is told by its id, its
+    // logs are read by id, see UniswapV4BaseProvider.getPoolManagerLogs
+    const v4Rounds: { provider: UniswapV4BaseProvider; ids: string[] }[] = []
+    this.providers.forEach((provider) => {
+      if (!(provider instanceof UniswapV4BaseProvider)) return
+      const ids: string[] = []
+      provider.pools.forEach((pool, id) => {
+        if (pool.blockNumber >= targetBlock) return
+        ids.push(id)
+        poolStateBlocks.set(id, pool.blockNumber)
+        if (fromBlock === -1n || pool.blockNumber < fromBlock) {
+          fromBlock = pool.blockNumber
+        }
+      })
+      if (ids.length) v4Rounds.push({ provider, ids })
+    })
     // nothing behind the requested block, the cached state of every pool
     // already includes the logs up to its own block
-    if (fromBlock === -1n || !poolAddresses.length) return false
+    if (fromBlock === -1n) return false
     addresses.push(...poolAddresses)
+    const keyOfLog = (log: Log) => {
+      for (const { provider } of v4Rounds) {
+        const id = provider.poolKeyOfLog(log)
+        if (id !== undefined) return id
+      }
+      return log.address.toLowerCase()
+    }
 
     // get logs of (fromBlock, untilBlock] in inclusive slices of 1000 blocks
     // to follow paging instructions from standard evm rpc specs
@@ -351,28 +385,26 @@ export class RainDataFetcher extends DataFetcher {
       slices.push({ from, to })
       from = to + 1n
     }
+    // a slice is read when the logs of every pool kind in it are read
     const logsPromises = slices.map((slice) =>
-      this.web3Client.getLogs({
-        events: this.eventsAbi,
-        address: addresses as `0x${string}`[],
-        fromBlock: slice.from,
-        toBlock: slice.to,
-      }),
+      Promise.all([
+        addresses.length
+          ? this.web3Client.getLogs({
+              events: this.eventsAbi,
+              address: addresses as `0x${string}`[],
+              fromBlock: slice.from,
+              toBlock: slice.to,
+            })
+          : Promise.resolve([]),
+        ...v4Rounds.map(({ provider, ids }) =>
+          provider.getPoolManagerLogs(ids, slice.from, slice.to),
+        ),
+      ]).then((parts) => parts.flat() as Log[]),
     )
 
     // await logs and sort them from earliest block to latest
     const logsResults = await Promise.allSettled(logsPromises)
-    const logs: Awaited<
-      ReturnType<
-        typeof this.web3Client.getLogs<
-          undefined,
-          ParseAbiItem<any>[],
-          undefined,
-          bigint,
-          bigint
-        >
-      >
-    > = []
+    const logs: Log[] = []
     for (let i = 0; i < logsResults.length; i++) {
       const res = logsResults[i]
       if (res && res.status === 'fulfilled') {
@@ -388,11 +420,11 @@ export class RainDataFetcher extends DataFetcher {
       }
     }
     logs.sort((a, b) => {
-      const diff = a.blockNumber - b.blockNumber
+      const diff = a.blockNumber! - b.blockNumber!
       if (diff === 0n) {
-        const txDiff = a.transactionIndex - b.transactionIndex
+        const txDiff = a.transactionIndex! - b.transactionIndex!
         if (txDiff === 0) {
-          return a.logIndex - b.logIndex
+          return a.logIndex! - b.logIndex!
         } else {
           return txDiff
         }
@@ -408,7 +440,7 @@ export class RainDataFetcher extends DataFetcher {
       // before its state block are already reflected in its cached data.
       // factory and fee module logs are not keyed by pool, the providers
       // guard those per pool with the pool's blockNumber
-      const stateBlock = poolStateBlocks.get(log.address.toLowerCase())
+      const stateBlock = poolStateBlocks.get(keyOfLog(log))
       if (
         stateBlock !== undefined &&
         log.blockNumber !== null &&
@@ -427,7 +459,8 @@ export class RainDataFetcher extends DataFetcher {
           const provider = this.providers[i]
           if (
             provider instanceof UniswapV2BaseProvider ||
-            provider instanceof UniswapV3BaseProvider
+            provider instanceof UniswapV3BaseProvider ||
+            provider instanceof UniswapV4BaseProvider
           ) {
             provider.pools.forEach((pool) => {
               // pools ahead of the requested block took no part in this round
@@ -449,7 +482,8 @@ export class RainDataFetcher extends DataFetcher {
     this.providers.forEach((provider) => {
       if (
         provider instanceof UniswapV2BaseProvider ||
-        provider instanceof UniswapV3BaseProvider
+        provider instanceof UniswapV3BaseProvider ||
+        provider instanceof UniswapV4BaseProvider
       ) {
         provider.reset()
       }

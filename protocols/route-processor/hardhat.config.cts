@@ -104,6 +104,22 @@ const config: HardhatUserConfig = {
         },
       },
     ],
+    overrides: Object.fromEntries(
+      // the Uniswap V4 callback guard uses transient storage (tload, tstore)
+      ['contracts/RouteProcessor6.sol', 'interfaces/UniV4.sol'].map((file) => [
+        file,
+        {
+          version: '0.8.25',
+          settings: {
+            evmVersion: 'cancun',
+            optimizer: {
+              enabled: true,
+              runs: 10000000,
+            },
+          },
+        },
+      ]),
+    ),
   },
   mocha: {
     timeout: 3600_000,
