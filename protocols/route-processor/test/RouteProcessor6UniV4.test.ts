@@ -90,7 +90,13 @@ const createClient = () =>
     .extend(publicActions)
     .extend(walletActions)
 
-describe.only('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
+// the rain CI runs the tests of one chain in each job, the chain CHAIN names
+const describeOnChain =
+  ChainId[process?.env?.CHAIN as keyof typeof ChainId] === ChainId.BASE
+    ? describe.only
+    : describe.skip
+
+describeOnChain('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
   let anvil: ChildProcess | undefined
   let client: ReturnType<typeof createClient>
   let user: Address
@@ -99,7 +105,8 @@ describe.only('RouteProcessor6 Uniswap V4 swaps on a Base fork', () => {
   let snapshot: Hex
 
   before(async () => {
-    if (!process.env.RPC_URL_BASE_FORK) throw new Error('RPC_URL_BASE_FORK is not set')
+    if (!process.env.RPC_URL_BASE_FORK)
+      throw new Error('RPC_URL_BASE_FORK is not set')
     anvil = spawn(
       process.env.ANVIL_BIN ?? 'anvil',
       [

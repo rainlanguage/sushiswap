@@ -28,6 +28,8 @@ jobs:
       
       - name: Test ./packages/sushi
         run: nix develop -c pnpm exec turbo run test --filter=./packages/sushi
+        env:
+          RPC_URL_BASE_FORK: ${{ secrets.RPC_URL_BASE_FORK }}
 
   datafetcher-test:
     strategy:
@@ -79,6 +81,11 @@ jobs:
 
       - name: Install deps
         run: nix develop -c pnpm install --frozen-lockfile
+
+      - name: Fork RPC of the matrix chain
+        env:
+          RPC_URL: ${{ secrets[format('RPC_URL_{0}_FORK', matrix.chain)] }}
+        run: echo "RPC_URL_${{ matrix.chain }}_FORK=$RPC_URL" >> "$GITHUB_ENV"
 
       - name: Test DataFecther
         run: nix develop -c pnpm exec turbo run test --filter=./protocols/route-processor
