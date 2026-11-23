@@ -1,6 +1,5 @@
 import { ChainId } from '../chain/index.js'
-import type { MultiRoute, RToken, RouteLeg } from '../tines/index.js'
-import { HEXer } from './HEXer.js'
+import type { MultiRoute, RouteLeg } from '../tines/index.js'
 import { PoolCode } from './pool-codes/PoolCode.js'
 import {
   PermitData,
@@ -14,6 +13,8 @@ import { TinesToRouteProcessor4 } from './tines-to-route-processor-4.js'
  * than one pool, a Uniswap V4 pool takes the native token itself
  */
 export class TinesToRouteProcessor6 extends TinesToRouteProcessor4 {
+  protected override nativeMultiLeg = true
+
   override swapCode(
     leg: RouteLeg,
     route: MultiRoute,
@@ -22,26 +23,6 @@ export class TinesToRouteProcessor6 extends TinesToRouteProcessor4 {
     const pc = this.getPoolCode(leg)
     const to = this.getPoolOutputAddress(leg, route, toAddress)
     return pc.getSwapCodeForRouteProcessor6(leg, route, to)
-  }
-
-  override processNativeCode(
-    token: RToken,
-    route: MultiRoute,
-    toAddress: string,
-  ): string {
-    const outputLegs = this.tokenOutputLegs.get(token.tokenId as string)
-    if (!outputLegs || outputLegs.length === 0) {
-      throw new Error('No output pool for native token')
-    }
-
-    const hex = new HEXer()
-      .uint8(3) // processNative commandCode
-      .uint8(outputLegs.length)
-
-    outputLegs.forEach((l) => {
-      hex.share16(l.swapPortion).hexData(this.swapCode(l, route, toAddress))
-    })
-    return hex.toString()
   }
 }
 

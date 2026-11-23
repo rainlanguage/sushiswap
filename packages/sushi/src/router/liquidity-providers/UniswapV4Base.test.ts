@@ -10,6 +10,8 @@ import { RToken, UniV4Pool } from '../../tines/index.js'
 import { UniV4PoolCode } from '../pool-codes/index.js'
 import type { RainDataFetcherOptions } from '../rain/RainDataFetcher.js'
 import { Router } from '../router.js'
+import { getRouteProcessor4Code } from '../tines-to-route-processor-4.js'
+import { getRouteProcessor6Code } from '../tines-to-route-processor-6.js'
 import { LiquidityProviders } from './LiquidityProvider.js'
 import { UniswapV4Provider } from './UniswapV4.js'
 import {
@@ -663,5 +665,59 @@ describe('UniV4PoolCode RouteProcessor6 code', () => {
     )
     expect(route.status).toBe('Success')
     expect(route.legs.map((l: any) => l.poolName)).toEqual([code.poolName])
+  })
+
+  it('codes the native token into two pools for RouteProcessor6, the RouteProcessor4 code takes one native pool only', () => {
+    const L = 10n ** 18n
+    /** a full range native ETH and USDC pool of the given PoolKey fee and tick spacing */
+    const codeWith = (fee: number, tickSpacing: number) => {
+      const poolKey = { ...key, fee, tickSpacing }
+      const edge = Math.floor(887272 / tickSpacing) * tickSpacing
+      const pool = new UniV4Pool(
+        computeUniswapV4PoolId(poolKey),
+        provider.getPoolManager(),
+        native,
+        USDC as RToken,
+        fee / 1_000_000,
+        UNISWAP_V4_ZERO_HOOKS,
+        0,
+        L,
+        2n ** 96n,
+        [
+          { index: -edge, DLiquidity: L },
+          { index: edge, DLiquidity: -L },
+        ],
+      )
+      return new UniV4PoolCode(
+        pool,
+        poolKey,
+        LiquidityProviders.UniswapV4,
+        'UniswapV4',
+      )
+    }
+    const codes = [codeWith(500, 10), codeWith(3000, 60)]
+    const pools = new Map(codes.map((c) => [c.pool.uniqueID(), c]))
+    // a trade large against both pools, the route splits it between them
+    const route = Router.findBestRoute(
+      pools,
+      ChainId.ETHEREUM,
+      Native.onChain(ChainId.ETHEREUM),
+      L / 5n,
+      USDC,
+      0,
+    )
+    expect(route.status).toBe('Success')
+    expect(route.legs).toHaveLength(2)
+    const rp = '0x2222222222222222222222222222222222222222'
+    const code = getRouteProcessor6Code(route, rp, TO, pools).toLowerCase()
+    // processNative, two pools, then a share and a pool type 6 swap for each
+    expect(code.slice(0, 6)).toBe('0x0302')
+    expect(code.slice(10, 12)).toBe('06')
+    expect(
+      code.split(provider.getPoolManager().slice(2).toLowerCase()),
+    ).toHaveLength(3)
+    expect(() => getRouteProcessor4Code(route, rp, TO, pools)).toThrow(
+      'Not 1 output pool for native token: 2',
+    )
   })
 })
