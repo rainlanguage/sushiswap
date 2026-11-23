@@ -71,6 +71,7 @@ jobs:
           BLAST,
           FLARE,
           ROBINHOOD,
+          ZEROG,
         ]
     runs-on: ubuntu-latest
     steps:

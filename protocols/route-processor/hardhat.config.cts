@@ -105,8 +105,13 @@ const config: HardhatUserConfig = {
       },
     ],
     overrides: Object.fromEntries(
-      // the Uniswap V4 callback guard uses transient storage (tload, tstore)
-      ['contracts/RouteProcessor6.sol', 'interfaces/UniV4.sol'].map((file) => [
+      // the Uniswap V4 and PancakeSwap Infinity callback guard uses transient
+      // storage (tload, tstore)
+      [
+        'contracts/RouteProcessor6.sol',
+        'interfaces/UniV4.sol',
+        'interfaces/PancakeSwapInfinity.sol',
+      ].map((file) => [
         file,
         {
           version: '0.8.25',

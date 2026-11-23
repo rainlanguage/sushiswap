@@ -10,6 +10,7 @@ export enum LiquidityProviders {
   UniswapV2 = 'UniswapV2',
   UniswapV3 = 'UniswapV3',
   UniswapV4 = 'UniswapV4',
+  Comfy = 'Comfy',
   Trident = 'Trident',
   QuickSwapV2 = 'QuickSwapV2',
   QuickSwapV3 = 'QuickSwapV3',
@@ -286,4 +287,9 @@ export const UniV3LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.KodiakV3,
   LiquidityProviders.Hydrex,
   LiquidityProviders.UpV3,
+]
+
+export const UniV4LiquidityProviders: LiquidityProviders[] = [
+  LiquidityProviders.UniswapV4,
+  LiquidityProviders.Comfy,
 ]

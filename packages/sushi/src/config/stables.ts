@@ -23,6 +23,7 @@ import {
   USDB,
   USDC,
   USDT,
+  USDZ,
   USD_PLUS,
   WORMHOLE_USDC,
   ZETA_BSC_BRIDGE_USDC,
@@ -209,6 +210,7 @@ export const STABLES = {
   [ChainId.CRONOS]: [USDC[ChainId.CRONOS]],
   [ChainId.BLAST]: [USDB[ChainId.BLAST], MUSD],
   [ChainId.FLARE]: [USDT[ChainId.FLARE]],
+  [ChainId.ZEROG]: [USDC[ChainId.ZEROG], USDZ],
   // TESTNETS
   // [ChainId.RINKEBY]: [USDC[ChainId.RINKEBY]],
   // [ChainId.ROPSTEN]: [

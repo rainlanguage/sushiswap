@@ -4,6 +4,7 @@ import {
   Token,
   USDB,
   USDG,
+  USDZ,
   USDe,
   cUSDX,
   cbBTC,
@@ -516,4 +517,10 @@ export const BASES_TO_CHECK_TRADES_AGAINST: {
     USDe,
   ],
   [ChainId.ROBINHOOD]: [WNATIVE[ChainId.ROBINHOOD], USDG, cbBTC],
+  [ChainId.ZEROG]: [
+    WNATIVE[ChainId.ZEROG],
+    WETH9[ChainId.ZEROG],
+    USDC[ChainId.ZEROG],
+    USDZ,
+  ],
 }

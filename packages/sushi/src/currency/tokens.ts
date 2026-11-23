@@ -706,6 +706,13 @@ export const WNATIVE = {
     name: 'Wrapped Bera',
   }),
   [ChainId.ROBINHOOD]: WETH9[ChainId.ROBINHOOD],
+  [ChainId.ZEROG]: new Token({
+    chainId: ChainId.ZEROG,
+    address: WNATIVE_ADDRESS[ChainId.ZEROG],
+    decimals: 18,
+    symbol: 'W0G',
+    name: 'Wrapped 0G',
+  }),
 } as const
 
 export const SUSHI = addressMapToTokenMap(
@@ -811,6 +818,13 @@ export const USDC: Record<keyof typeof USDC_ADDRESS, Token> = {
     decimals: 18,
     symbol: 'USDC',
     name: 'USD Coin',
+  }),
+  [ChainId.ZEROG]: new Token({
+    chainId: ChainId.ZEROG,
+    address: USDC_ADDRESS[ChainId.ZEROG],
+    decimals: 6,
+    symbol: 'USDC.e',
+    name: 'Bridged USDC',
   }),
 } as const
 
@@ -1278,4 +1292,12 @@ export const cbBTC = new Token({
   decimals: 8,
   symbol: 'cbBTC',
   name: 'Coinbase Wrapped BTC',
+})
+
+export const USDZ = new Token({
+  chainId: ChainId.ZEROG,
+  address: '0xd4d54bd7379e799417563b1bb42426c9bd4ccb2a',
+  decimals: 6,
+  symbol: 'USDZ',
+  name: 'USDZ',
 })

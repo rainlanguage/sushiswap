@@ -10,6 +10,7 @@ import '../interfaces/IPool.sol';
 import '../interfaces/IWETH.sol';
 import '../interfaces/ICurve.sol';
 import '../interfaces/UniV4.sol';
+import '../interfaces/PancakeSwapInfinity.sol';
 import './InputStream.sol';
 import './Utils.sol';
 import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -327,6 +328,7 @@ contract RouteProcessor6 is Ownable {
     } else {
       if (poolType == 1) swapUniV3(stream, from, tokenIn, amountIn);
       else if (poolType == 5) swapCurve(stream, from, tokenIn, amountIn);
+      else if (poolType == 7) swapPancakeSwapInfinityCL(stream, from, tokenIn, amountIn);
       else if (poolType == 3) bentoBridge(stream, from, tokenIn, amountIn);
       else revert('RouteProcessor: Unknown pool type');
     }
@@ -539,6 +541,7 @@ contract RouteProcessor6 is Ownable {
     address to;
   }
   using PoolManagerAdditionalLibrary for IPoolManager;
+  using SettlementLibrary for ISettlement;
   using BalanceDeltaLibrary for BalanceDelta;
 
   /// @notice UniswapV4 pool swap
@@ -590,41 +593,123 @@ contract RouteProcessor6 is Ownable {
     UniV4CallbackData memory data = abi.decode(rawData, (UniV4CallbackData));
     BalanceDelta delta = manager.swap(data.key, data.params, data.hookData);
 
-    // the RP settles and takes the balance deltas the manager holds for it, unlock needs them at zero. The manager
-    // comes from the route, and a hook or a settleFor can change those deltas, so the checks below bind them to
-    // the swap of amountIn: the input delta is the full input and the delta of the swap, the output delta is no debt
     int256 deltaAfter0 = manager.currencyDelta(data.key.currency0, address(this));
     int256 deltaAfter1 = manager.currencyDelta(data.key.currency1, address(this));
+    checkSwapDeltas(data.params.zeroForOne, data.params.amountSpecified, delta, deltaAfter0, deltaAfter1);
+    settleAndTake(ISettlement(msg.sender), data.key.currency0, data.key.currency1, deltaAfter0, deltaAfter1, data.to);
+    return '';
+  }
 
-    // the swap must take the full input, a partial fill at the price limit would leave the rest on the RP
-    if (data.params.zeroForOne) {
+  /// @notice Checks the balance deltas a Uniswap V4 PoolManager or a PancakeSwap Infinity Vault holds for the RP
+  /// after a swap. The RP settles and takes these deltas, the unlock or the lock needs them at zero. The manager and
+  /// the vault come from the route, and a hook or a settleFor can change the deltas, so the checks bind them to the
+  /// swap of amountIn: the input delta is the full input and the delta of the swap, the output delta is no debt. A
+  /// partial fill at the price limit would leave the rest of the input on the RP, it reverts
+  function checkSwapDeltas(
+    bool zeroForOne,
+    int256 amountSpecified,
+    BalanceDelta delta,
+    int256 deltaAfter0,
+    int256 deltaAfter1
+  ) private pure {
+    if (zeroForOne) {
       require(
-          deltaAfter0 == data.params.amountSpecified,
+          deltaAfter0 == amountSpecified,
           "deltaAfter0 is not equal to data.params.amountSpecified"
       );
       require(delta.amount0() == deltaAfter0, "delta.amount0() is not equal to deltaAfter0");
       require(deltaAfter1 >= 0, "deltaAfter1 is not greater than or equal to 0");
     } else {
       require(
-          deltaAfter1 == data.params.amountSpecified,
+          deltaAfter1 == amountSpecified,
           "deltaAfter1 is not equal to data.params.amountSpecified"
       );
       require(delta.amount1() == deltaAfter1, "delta.amount1() is not equal to deltaAfter1");
       require(deltaAfter0 >= 0, "deltaAfter0 is not greater than or equal to 0");
     }
+  }
 
-    if (deltaAfter0 < 0) {
-      manager.settle(data.key.currency0, uint256(-deltaAfter0));
-    }
-    if (deltaAfter1 < 0) {
-      manager.settle(data.key.currency1, uint256(-deltaAfter1));
-    }
-    if (deltaAfter0 > 0) {
-      manager.take(data.key.currency0, data.to, uint256(deltaAfter0));
-    }
-    if (deltaAfter1 > 0) {
-      manager.take(data.key.currency1, data.to, uint256(deltaAfter1));
-    }
+  /// @notice Pays what the RP owes and takes what it is owed to `to`, on a Uniswap V4 PoolManager or a PancakeSwap
+  /// Infinity Vault, they have the same sync, settle and take, see ISettlement
+  function settleAndTake(
+    ISettlement target,
+    Currency currency0,
+    Currency currency1,
+    int256 deltaAfter0,
+    int256 deltaAfter1,
+    address to
+  ) private {
+    if (deltaAfter0 < 0) target.settle(currency0, uint256(-deltaAfter0));
+    if (deltaAfter1 < 0) target.settle(currency1, uint256(-deltaAfter1));
+    if (deltaAfter0 > 0) target.take(currency0, to, uint256(deltaAfter0));
+    if (deltaAfter1 > 0) target.take(currency1, to, uint256(deltaAfter1));
+  }
+
+  struct InfinityCallbackData {
+    InfinityPoolKey key;
+    IInfinityCLPoolManager.SwapParams params;
+    bytes hookData;
+    address to;
+  }
+
+  /// @notice PancakeSwap Infinity CL pool swap
+  /// @param stream [vault, manager, tokenOut, fee, parameters, hooks, zeroForOne, hookData, to]
+  /// @param from Where to take liquidity for swap
+  /// @param tokenIn Input token
+  /// @param amountIn Amount of tokenIn to take for swap
+  function swapPancakeSwapInfinityCL(uint256 stream, address from, address tokenIn, uint256 amountIn) private {
+    if (tokenIn == Utils.NATIVE_ADDRESS) tokenIn = address(0); // For Infinity Native is 0x0
+    address vault = stream.readAddress();
+    InfinityCallbackData memory data = readInfinityCallbackData(stream, tokenIn, amountIn);
+
+    if (from == msg.sender) IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), uint256(amountIn));
+
+    // the Vault calls back, the same guard as the Uniswap V4 one holds it
+    UniV4CallBackProtection.checkAndSetExpectedManager(address(0), vault);
+    IInfinityVault(vault).lock(abi.encode(data));
+    // the callback clears the slot, a vault that did not call back leaves it set
+    UniV4CallBackProtection.checkAndSetExpectedManager(address(0), address(0));
+  }
+
+  /// @notice Reads an Infinity CL swap after its vault: the PoolKey, the swap of amountIn of tokenIn, the hook data and the receiver
+  /// @param stream [manager, tokenOut, fee, parameters, hooks, zeroForOne, hookData, to]
+  function readInfinityCallbackData(uint256 stream, address tokenIn, uint256 amountIn)
+    private
+    pure
+    returns (InfinityCallbackData memory data)
+  {
+    data.key.poolManager = stream.readAddress();
+    address tokenOut = stream.readAddress();
+    if (tokenOut == Utils.NATIVE_ADDRESS) tokenOut = address(0); // For Infinity Native is 0x0
+    data.key.fee = stream.readUint24();
+    data.key.parameters = stream.readBytes32();
+    data.key.hooks = IHooks.wrap(stream.readAddress());
+    bool zeroForOne = stream.readUint8() > 0;
+    data.key.currency0 = Currency.wrap(zeroForOne ? tokenIn : tokenOut);
+    data.key.currency1 = Currency.wrap(zeroForOne ? tokenOut : tokenIn);
+    data.params = IInfinityCLPoolManager.SwapParams(
+      zeroForOne,
+      -int256(amountIn),
+      zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1
+    );
+    data.hookData = stream.readBytes();
+    data.to = stream.readAddress();  // where to transfer liquidity after this swap
+  }
+
+  // callback for PancakeSwap Infinity, the Vault decodes the returned bytes
+  // Attention: For Infinity Native is 0x0
+  function lockAcquired(bytes calldata rawData) external returns (bytes memory) {
+    UniV4CallBackProtection.checkAndSetExpectedManager(msg.sender, address(0));
+    // the guard checked the caller is the vault of the swap
+    IInfinityVault vault = IInfinityVault(msg.sender);
+
+    InfinityCallbackData memory data = abi.decode(rawData, (InfinityCallbackData));
+    BalanceDelta delta = IInfinityCLPoolManager(data.key.poolManager).swap(data.key, data.params, data.hookData);
+
+    int256 deltaAfter0 = vault.currencyDelta(address(this), data.key.currency0);
+    int256 deltaAfter1 = vault.currencyDelta(address(this), data.key.currency1);
+    checkSwapDeltas(data.params.zeroForOne, data.params.amountSpecified, delta, deltaAfter0, deltaAfter1);
+    settleAndTake(ISettlement(msg.sender), data.key.currency0, data.key.currency1, deltaAfter0, deltaAfter1, data.to);
     return '';
   }
 }

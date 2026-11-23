@@ -300,6 +300,7 @@ export const ROUTE_PROCESSOR_4_SUPPORTED_CHAIN_IDS = [
   ChainId.MATCHAIN,
   ChainId.BERA,
   ChainId.ROBINHOOD,
+  ChainId.ZEROG,
 ] as const
 export type RouteProcessor4ChainId =
   (typeof ROUTE_PROCESSOR_4_SUPPORTED_CHAIN_IDS)[number]
@@ -342,10 +343,28 @@ export const ROUTE_PROCESSOR_4_ADDRESS: Record<
   [ChainId.MATCHAIN]: '0xbD8849759749B4d8506bC851aceF0E19F34EaBEE',
   [ChainId.BERA]: '0x', // needs deployment
   [ChainId.ROBINHOOD]: '0x6E2d0e71d900474b262E545Bc4C98b71ab368d21',
+  [ChainId.ZEROG]: '0x6E2d0e71d900474b262E545Bc4C98b71ab368d21',
 } as const
 export const isRouteProcessor4ChainId = (
   chainId: ChainId,
 ): chainId is RouteProcessor4ChainId =>
   ROUTE_PROCESSOR_4_SUPPORTED_CHAIN_IDS.includes(
     chainId as RouteProcessor4ChainId,
+  )
+
+// v6
+export const ROUTE_PROCESSOR_6_SUPPORTED_CHAIN_IDS = [ChainId.ZEROG] as const
+export type RouteProcessor6ChainId =
+  (typeof ROUTE_PROCESSOR_6_SUPPORTED_CHAIN_IDS)[number]
+export const ROUTE_PROCESSOR_6_ADDRESS: Record<
+  RouteProcessor6ChainId,
+  `0x${string}`
+> = {
+  [ChainId.ZEROG]: '0x2b530Fb50B6e5BD8BFB44588c70ca89b0c0A7017',
+} as const
+export const isRouteProcessor6ChainId = (
+  chainId: ChainId,
+): chainId is RouteProcessor6ChainId =>
+  ROUTE_PROCESSOR_6_SUPPORTED_CHAIN_IDS.includes(
+    chainId as RouteProcessor6ChainId,
   )

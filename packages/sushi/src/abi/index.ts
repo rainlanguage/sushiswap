@@ -53,6 +53,10 @@ export { uniswapV2PairAbi } from './uniswapV2PairAbi.js'
 export { uniswapV2RouterAbi } from './uniswapV2RouterAbi.js'
 export { uniswapV3FactoryAbi } from './uniswapV3FactoryAbi.js'
 export { uniswapV3PoolAbi } from './uniswapV3PoolAbi.js'
+export {
+  pancakeSwapInfinityCLPoolManagerAbi_getPoolBitmapInfo,
+  pancakeSwapInfinityCLPoolManagerAbi_getPoolTickInfo,
+} from './pancakeSwapInfinityCLPoolManagerAbi.js'
 export { uniswapV4PoolManagerAbi_Initialize } from './uniswapV4PoolManagerAbi.js'
 export {
   uniswapV4StateViewAbi_getLiquidity,

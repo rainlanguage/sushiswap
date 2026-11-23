@@ -94,9 +94,39 @@ interface IPoolManager {
   function sync(Currency currency) external;
 }
 
+/// @notice The settlement calls of a Uniswap V4 PoolManager, a PancakeSwap Infinity Vault has the same ones with
+/// the same selectors
+interface ISettlement {
+  /// @notice Writes the current ERC20 balance of the currency before tokens are sent in, the native currency clears it
+  function sync(Currency currency) external;
+
+  /// @notice Pays what the caller owes, the tokens sent since sync or the native value
+  function settle() external payable returns (uint256 paid);
+
+  /// @notice Pays out what the caller is owed
+  function take(Currency currency, address to, uint256 amount) external;
+}
+
+library SettlementLibrary {
+  using SafeERC20 for IERC20;
+
+  /// @notice Pays the amount of the currency the caller owes to a Uniswap V4 PoolManager or a PancakeSwap Infinity
+  /// Vault. The synced currency stays for the whole transaction: if an earlier call synced an ERC20 and did not
+  /// settle it, a settle with value reverts, so the native currency is synced too, which clears it
+  function settle(ISettlement target, Currency currency, uint256 amount) internal {
+    target.sync(currency);
+    if (Currency.unwrap(currency) == address(0)) {
+      target.settle{value: amount}();
+    } else {
+      // a token that returns no bool (USDT) must not revert the swap
+      IERC20(Currency.unwrap(currency)).safeTransfer(address(target), amount);
+      target.settle();
+    }
+  }
+}
+
 library PoolManagerAdditionalLibrary {
   using PoolManagerAdditionalLibrary for IPoolManager;
-  using SafeERC20 for IERC20;
 
     /// @notice Get the current delta for a caller in the given currency
     /// @param target The credited account address
@@ -109,20 +139,6 @@ library PoolManagerAdditionalLibrary {
             key := keccak256(0, 64)
         }
         return int256(uint256(manager.exttload(key)));
-    }
-
-    function settle(IPoolManager manager, Currency currency, uint256 amount) internal {
-      if (Currency.unwrap(currency) == address(0)) {
-        // This is native for UniV4. The synced currency lives for the whole transaction, an ERC20
-        // an earlier call synced and did not settle makes a settle with value revert, the native sync clears it
-        manager.sync(currency);
-        manager.settle{value: amount}();
-      } else {
-          manager.sync(currency);
-          // a token that returns no bool (USDT) must not revert the swap
-          IERC20(Currency.unwrap(currency)).safeTransfer(address(manager), amount);
-          manager.settle();
-      }
     }
 }
 

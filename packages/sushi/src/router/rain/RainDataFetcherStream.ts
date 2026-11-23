@@ -19,7 +19,7 @@ import { promiseTimeout } from '../timeout.js'
 import { RainDataFetcher, RainDataFetcherOptions } from './RainDataFetcher.js'
 import { RainV2Pool, UniswapV2BaseProvider } from './UniswapV2Base.js'
 import { RainV3Pool, UniswapV3BaseProvider } from './UniswapV3Base.js'
-import { UniswapV4BaseProvider, UniswapV4EventsAbi } from './UniswapV4Base.js'
+import { UniswapV4BaseProvider } from './UniswapV4Base.js'
 import { VelodromeSlipstreamBaseProvider } from './VelodromeSlipstreamBase.js'
 import { logId } from './logId.js'
 import { PoolMove, moveOf } from './moveDirection.js'
@@ -192,7 +192,9 @@ export { logId }
  * about the PoolManager, as a PoolCreated log is about its factory. A second
  * logs subscription takes the other PoolManager logs of the cached V4 pools,
  * by their ids in topic 1, a log is about the pool its id names. A gap read
- * reads those logs by id, see UniswapV4BaseProvider.getPoolManagerLogs
+ * reads those logs by id, see UniswapV4BaseProvider.getPoolManagerLogs. A
+ * PancakeSwap Infinity CL pool is held as a V4 one, its CL pool manager is
+ * a PoolManager with its own events, the same two subscriptions take them
  */
 export class RainDataFetcherStream extends RainDataFetcher {
   wsClient: PublicClient | undefined
@@ -278,8 +280,8 @@ export class RainDataFetcherStream extends RainDataFetcher {
   private created = false
   /** topic0 of the fee module events that name one pool, see feeKinds */
   private perPoolFeeKinds: Set<Hex> | undefined
-  /** topic0 of the PoolManager Initialize event, see poolOfLog */
-  private initializeTopic: Hex | undefined
+  /** topic0 of the Initialize events of the PoolManagers, see poolOfLog */
+  private initializeTopics: Set<Hex> | undefined
   /** a changed fee module is being covered, see coverModules */
   private covering = false
   /**
@@ -1368,12 +1370,16 @@ export class RainDataFetcherStream extends RainDataFetcher {
   private poolOfLog(address: string, topics: readonly Hex[]): string {
     const lower = address.toLowerCase()
     if (topics.length > 1 && this.poolManagers.includes(lower)) {
-      if (!this.initializeTopic) {
-        this.initializeTopic = toEventSelector(
-          UniswapV4EventsAbi.find((item) => item.name === 'Initialize')!,
+      // the events of a V4 provider are its Initialize, see UniswapV4BaseProvider.eventsAbi
+      if (!this.initializeTopics) {
+        this.initializeTopics = new Set(
+          this.v4Providers.flatMap((p) =>
+            p.eventsAbi.map((item) => toEventSelector(item)),
+          ),
         )
       }
-      if (topics[0] !== this.initializeTopic) return topics[1]!.toLowerCase()
+      if (!this.initializeTopics.has(topics[0]!))
+        return topics[1]!.toLowerCase()
     }
     if (
       topics.length > 1 &&
