@@ -2,7 +2,7 @@ import { Abi, Hex, Log, decodeEventLog, toEventSelector } from 'viem'
 
 /** the move a Swap or Sync log tells about its pool, see moveOf */
 export interface PoolMove {
-  /** the event the log is, a univ3 style Swap or a univ2 Sync */
+  /** the event the log is, a univ3 style or univ4 Swap or a univ2 Sync */
   kind: 'Swap' | 'Sync'
   /**
    * the move's direction: true when the pool received token0 and paid
@@ -35,20 +35,23 @@ function kindOf(abi: Abi, topic: Hex | undefined): 'Swap' | 'Sync' | undefined {
 /**
  * The move a log tells about its pool, undefined for a log that is not a
  * Swap or a Sync of the abi. A univ3 style Swap carries the direction in the
- * signs of its amounts, a positive one is what the pool received. A univ2
- * Sync carries the reserves alone, the direction is their change against the
- * reserves given as previous, one reserve up and the other down is a swap. The
- * direction is undefined when the log tells none: a univ2 mint or burn, both
- * reserves move the same way, a Sync with nothing to compare to, a swap of
- * nothing, or a log that does not decode
+ * signs of its amounts, a positive one is what the pool received, a univ4
+ * Swap carries the swapper's deltas, a negative one is what the pool
+ * received. A univ2 Sync carries the reserves alone, the direction is their
+ * change against the reserves given as previous, one reserve up and the
+ * other down is a swap. The direction is undefined when the log tells none:
+ * a univ2 mint or burn, both reserves move the same way, a Sync with nothing
+ * to compare to, a swap of nothing, or a log that does not decode
  * @param abi - the events abi of the pool's provider
  * @param log - the log
  * @param previous - (optional) the pool's reserves before the log, what a Sync is compared with
+ * @param swapperDeltas - (optional) the Swap amounts are the swapper's deltas, as in a univ4 Swap, default false
  */
 export function moveOf(
   abi: Abi,
   log: Log,
   previous?: [bigint, bigint],
+  swapperDeltas = false,
 ): PoolMove | undefined {
   const kind = kindOf(abi, log.topics[0])
   if (!kind) return undefined
@@ -60,10 +63,13 @@ export function moveOf(
     return { kind, zeroForOne: undefined }
   }
   if (kind === 'Swap') {
-    const { amount0, amount1 } = args
-    if (typeof amount0 !== 'bigint' || typeof amount1 !== 'bigint') {
+    const { amount0: delta0, amount1: delta1 } = args
+    if (typeof delta0 !== 'bigint' || typeof delta1 !== 'bigint') {
       return { kind, zeroForOne: undefined }
     }
+    // what the pool received
+    const amount0 = swapperDeltas ? -delta0 : delta0
+    const amount1 = swapperDeltas ? -delta1 : delta1
     if (amount0 > 0n && amount1 <= 0n) return { kind, zeroForOne: true }
     if (amount1 > 0n && amount0 <= 0n) return { kind, zeroForOne: false }
     return { kind, zeroForOne: undefined }

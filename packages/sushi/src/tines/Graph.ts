@@ -1,6 +1,7 @@
 import { Address } from 'viem'
 import { PoolType, RPool, RToken, setTokenId } from './RPool.js'
 import { StableSwapRPool } from './StableSwapPool.js'
+import { UniV4Pool } from './UniV4Pool.js'
 import {
   ASSERT,
   DEBUG,
@@ -963,9 +964,12 @@ export class Graph {
         if (processedVert.has(v2)) return
         // multitoken pool protection. Don't use two pools from one multipool in one path (but is possible in
         // different paths => in one route). It is not better then use one pool (For curve at least)
-        // and it is calculated wrong (with no flow applying)
+        // and it is calculated wrong (with no flow applying). Uniswap V4 pools all have the address
+        // of the PoolManager, they are separate pools
+        const source = (closestVert as Vertice).bestSource?.pool
         if (
-          e.pool.address === (closestVert as Vertice).bestSource?.pool.address
+          e.pool.address === source?.address &&
+          !(e.pool instanceof UniV4Pool && source instanceof UniV4Pool)
         )
           return
 

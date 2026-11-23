@@ -1,4 +1,4 @@
-import { PublicClient, createPublicClient } from 'viem'
+import { http, PublicClient, createPublicClient } from 'viem'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ChainId } from '../../chain/constants.js'
 import { ROUTE_PROCESSOR_4_ADDRESS } from '../../config/route-processor.js'
@@ -11,7 +11,10 @@ import { RainDataFetcher } from './RainDataFetcher.js'
 
 describe('RainDataFetcher tests', async () => {
   // we test on Base chain because it has at least one of each dex type
-  const client = createPublicClient(publicClientConfig[ChainId.BASE])
+  const client = createPublicClient({
+    ...publicClientConfig[ChainId.BASE],
+    transport: http(process.env['RPC_URL_BASE_FORK']),
+  })
 
   // 3000 blocks apart, to test pool data updates by event logs
   const currentBlockNumber = await client.getBlockNumber()

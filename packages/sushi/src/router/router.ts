@@ -29,6 +29,7 @@ import {
   getRouteProcessor2Code,
 } from './tines-to-route-processor-2.js'
 import { getRouteProcessor4Code } from './tines-to-route-processor-4.js'
+import { getRouteProcessor6Code } from './tines-to-route-processor-6.js'
 import { getRouteProcessorCode } from './tines-to-route-processor.js'
 
 function TokenToRToken(t: Type): RToken {
@@ -76,6 +77,58 @@ export interface RPParams {
 }
 
 export type PoolFilter = (list: RPool) => boolean
+
+/** The processRoute call of a route with the RouteProcessor4 signature, the route code is made by the given encoder */
+function processRoute4Params(
+  getRouteCode: typeof getRouteProcessor4Code,
+  poolCodesMap: Map<string, PoolCode>,
+  route: MultiRoute,
+  fromToken: Type,
+  toToken: Type,
+  to: Address,
+  RPAddr: Address,
+  permits: PermitData[],
+  maxPriceImpact: number,
+  source: RouterLiquiditySource,
+): RPParams {
+  const tokenIn =
+    fromToken instanceof Token
+      ? (fromToken.address as Address)
+      : '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+  const tokenOut =
+    toToken instanceof Token
+      ? (toToken.address as Address)
+      : '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+  const isWrapOrUnwap =
+    isWrap({ fromToken, toToken }) || isUnwrap({ fromToken, toToken })
+  const amountOutMin = isWrapOrUnwap
+    ? route.amountOutBI
+    : (route.amountOutBI * getBigInt((1 - maxPriceImpact) * 1_000_000)) /
+      1_000_000n
+
+  const routeCode = getRouteCode(
+    route,
+    RPAddr,
+    to,
+    poolCodesMap,
+    permits,
+    source,
+  ) as Hex
+  const data = encodeFunctionData({
+    ...RP4processRouteEncodeData,
+    args: [tokenIn, route.amountInBI, tokenOut, amountOutMin, to, routeCode],
+  })
+  return {
+    tokenIn,
+    amountIn: route.amountInBI,
+    tokenOut,
+    amountOutMin,
+    to,
+    routeCode,
+    data,
+    value: fromToken instanceof Token ? undefined : route.amountInBI,
+  }
+}
 
 export class Router {
   static findSushiRoute(
@@ -205,7 +258,7 @@ export class Router {
       ...route,
       legs: route.legs.map((l) => ({
         ...l,
-        poolName: poolCodesMap.get(l.poolAddress)?.poolName ?? 'Unknown Pool',
+        poolName: poolCodesMap.get(l.uniqueId)?.poolName ?? 'Unknown Pool',
       })),
     }
   }
@@ -325,43 +378,47 @@ export class Router {
     maxPriceImpact = 0.005,
     source = RouterLiquiditySource.Sender,
   ): RPParams {
-    const tokenIn =
-      fromToken instanceof Token
-        ? (fromToken.address as Address)
-        : '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
-    const tokenOut =
-      toToken instanceof Token
-        ? (toToken.address as Address)
-        : '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
-    const isWrapOrUnwap =
-      isWrap({ fromToken, toToken }) || isUnwrap({ fromToken, toToken })
-    const amountOutMin = isWrapOrUnwap
-      ? route.amountOutBI
-      : (route.amountOutBI * getBigInt((1 - maxPriceImpact) * 1_000_000)) /
-        1_000_000n
-
-    const routeCode = getRouteProcessor4Code(
-      route,
-      RPAddr,
-      to,
+    return processRoute4Params(
+      getRouteProcessor4Code,
       poolCodesMap,
-      permits,
-      source,
-    ) as Hex
-    const data = encodeFunctionData({
-      ...RP4processRouteEncodeData,
-      args: [tokenIn, route.amountInBI, tokenOut, amountOutMin, to, routeCode],
-    })
-    return {
-      tokenIn,
-      amountIn: route.amountInBI,
-      tokenOut,
-      amountOutMin,
+      route,
+      fromToken,
+      toToken,
       to,
-      routeCode,
-      data,
-      value: fromToken instanceof Token ? undefined : route.amountInBI,
-    }
+      RPAddr,
+      permits,
+      maxPriceImpact,
+      source,
+    )
+  }
+
+  /**
+   * The processRoute call of a route for RouteProcessor6, its processRoute has
+   * the RouteProcessor4 signature, the route code takes Uniswap V4 pools
+   */
+  static routeProcessor6Params(
+    poolCodesMap: Map<string, PoolCode>,
+    route: MultiRoute,
+    fromToken: Type,
+    toToken: Type,
+    to: Address,
+    RPAddr: Address,
+    permits: PermitData[] = [],
+    maxPriceImpact = 0.005,
+    source = RouterLiquiditySource.Sender,
+  ): RPParams {
+    return processRoute4Params(
+      getRouteProcessor6Code,
+      poolCodesMap,
+      route,
+      fromToken,
+      toToken,
+      to,
+      RPAddr,
+      permits,
+      maxPriceImpact,
+      source,
+    )
   }
 
   // Human-readable route printing

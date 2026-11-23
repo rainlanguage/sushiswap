@@ -36,6 +36,8 @@ export class TinesToRouteProcessor2 {
   pools: Map<string, PoolCode>
   tokenOutputLegs: Map<string, RouteLeg[]> = new Map()
   //presendedLegs: Set<RouteLeg> = new Set()
+  /** the native token can go to more than one pool, else it goes to one pool only, see processNativeCode */
+  protected nativeMultiLeg = false
 
   constructor(
     routeProcessorAddress: string,
@@ -112,9 +114,12 @@ export class TinesToRouteProcessor2 {
     toAddress: string,
   ): string {
     const outputLegs = this.tokenOutputLegs.get(token.tokenId as string)
-    if (!outputLegs || outputLegs.length !== 1) {
+    if (!outputLegs || outputLegs.length === 0) {
+      throw new Error('No output pool for native token')
+    }
+    if (!this.nativeMultiLeg && outputLegs.length !== 1) {
       throw new Error(
-        `Not 1 output pool for native token: ${outputLegs?.length}`,
+        `Not 1 output pool for native token: ${outputLegs.length}`,
       )
     }
 

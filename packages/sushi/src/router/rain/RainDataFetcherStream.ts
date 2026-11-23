@@ -14,10 +14,12 @@ import {
   LiquidityProvider,
   LiquidityProviders,
 } from '../liquidity-providers/LiquidityProvider.js'
+import type { UniswapV4PoolState } from '../liquidity-providers/UniswapV4Base.js'
 import { promiseTimeout } from '../timeout.js'
 import { RainDataFetcher, RainDataFetcherOptions } from './RainDataFetcher.js'
 import { RainV2Pool, UniswapV2BaseProvider } from './UniswapV2Base.js'
 import { RainV3Pool, UniswapV3BaseProvider } from './UniswapV3Base.js'
+import { UniswapV4BaseProvider, UniswapV4EventsAbi } from './UniswapV4Base.js'
 import { VelodromeSlipstreamBaseProvider } from './VelodromeSlipstreamBase.js'
 import { logId } from './logId.js'
 import { PoolMove, moveOf } from './moveDirection.js'
@@ -51,18 +53,25 @@ const LOG_READ_SLICE = 1000n
 const FETCH_TIMEOUT = Symbol('fetch timeout')
 
 /** a provider that holds pools */
-export type TrackedProvider = UniswapV2BaseProvider | UniswapV3BaseProvider
+export type TrackedProvider =
+  | UniswapV2BaseProvider
+  | UniswapV3BaseProvider
+  | UniswapV4BaseProvider
 
 /** a provider's cached pool, the object it applies its logs to */
-export type LivePool = RainV2Pool | RainV3Pool
+export type LivePool = RainV2Pool | RainV3Pool | UniswapV4PoolState
 
-/** called with the pools whose state changed, and the newest block applied */
+/**
+ * called with the pools whose state changed, by lowercase address, a
+ * Uniswap V4 pool by its id, and the newest block applied
+ */
 export type PoolsChangeCallback = (addresses: string[], block: bigint) => void
 
 /**
- * called with the lowercase pool address, the log that moved its price and
- * the move's direction: true when the pool received token0 and paid token1,
- * false the other way round, undefined when the log tells none, see moveOf
+ * called with the lowercase pool address, the id of a Uniswap V4 pool, the
+ * log that moved its price and the move's direction: true when the pool
+ * received token0 and paid token1, false the other way round, undefined
+ * when the log tells none, see moveOf
  */
 export type PoolChangeCallback = (
   address: string,
@@ -145,12 +154,14 @@ export { logId }
  * fetch the pools, then start(): a newHeads and a logs subscription open
  * on the websocket client (with flashblocks a newFlashblocks and a
  * pendingLogs one, the sealed head is then the flashblock's block less
- * one), on the factories, the fee modules and every cached pool, with
- * every event the providers know. Each stream log goes through the
- * providers' processLog() in full mode, and the providers' afterProcessLog()
- * runs at the sealed head once per followUpInterval heads, for the
- * providers a log touched since their last run and their touched pools (or
- * every provider over every pool with followUpTouchedOnly off), as the
+ * one), on the factories, the fee modules and every cached pool that is
+ * not a Uniswap V4 one, with every event the providers know, and while V4
+ * pools are cached a second logs subscription for them, see below. Each
+ * stream log goes through the providers' processLog() in full mode, and
+ * the providers' afterProcessLog() runs at the sealed head once per
+ * followUpInterval heads, for the providers a log touched since their last
+ * run and their touched pools (or every provider over every pool with
+ * followUpTouchedOnly off), as the
  * parent's round ran it once per update. The logs that arrive while those reads run keep
  * applying, a provider adds the changes of the ones that fall into what it
  * fetched back on top of the read, see UniswapV3BaseProvider.afterProcessLog.
@@ -173,7 +184,15 @@ export { logId }
  * block, the stream served no log for them, so a later gap read stays
  * short. In stream mode updatePools() only runs the gap reads that are
  * due, the stream does the rest, and a created pool is reported by
- * onPoolCreated
+ * onPoolCreated.
+ *
+ * A Uniswap V4 pool lives in its PoolManager and is told by its id, the
+ * stream keys it by that id. The PoolManager is one of the factories, the
+ * logs subscription takes its Initialize logs, and an Initialize log is
+ * about the PoolManager, as a PoolCreated log is about its factory. A second
+ * logs subscription takes the other PoolManager logs of the cached V4 pools,
+ * by their ids in topic 1, a log is about the pool its id names. A gap read
+ * reads those logs by id, see UniswapV4BaseProvider.getPoolManagerLogs
  */
 export class RainDataFetcherStream extends RainDataFetcher {
   wsClient: PublicClient | undefined
@@ -190,12 +209,16 @@ export class RainDataFetcherStream extends RainDataFetcher {
   /** the head the last follow up ran at, see followUp */
   followUpHead = -1n
   unsubscribeTimeout = STREAM_UNSUBSCRIBE_TIMEOUT
-  /** the logs subscription, undefined while none is open */
+  /** the logs subscription of the factories, the fee modules and the pools that are not Uniswap V4 ones, undefined while none is open */
   subscription: Subscription | undefined
   /** the heads subscription, undefined while none is open */
   headsSubscription: Subscription | undefined
+  /** the logs subscription of the cached Uniswap V4 pools, undefined while none is open or no V4 pool is cached */
+  v4Subscription: Subscription | undefined
   /** the pool addresses the logs subscription covers */
   subscribed: Set<string> = new Set()
+  /** the Uniswap V4 pool ids the V4 logs subscription covers */
+  subscribedIds: Set<string> = new Set()
   /** the fee module addresses the logs subscription covers */
   subscribedModules: string[] = []
   /** the newest sealed head served, -1n before the first */
@@ -255,8 +278,16 @@ export class RainDataFetcherStream extends RainDataFetcher {
   private created = false
   /** topic0 of the fee module events that name one pool, see feeKinds */
   private perPoolFeeKinds: Set<Hex> | undefined
+  /** topic0 of the PoolManager Initialize event, see poolOfLog */
+  private initializeTopic: Hex | undefined
   /** a changed fee module is being covered, see coverModules */
   private covering = false
+  /**
+   * the logs subscriptions that came up while the other subscribe of their
+   * subscribeLogs call had not answered yet, a drop or a stop takes them
+   * down, see takePending
+   */
+  private pendingSubscriptions = new Set<Subscription>()
   private tracked: TrackedProvider[] | undefined
   private logsGeneration = 0
   private flushTimer: ReturnType<typeof setImmediate> | undefined
@@ -286,15 +317,33 @@ export class RainDataFetcherStream extends RainDataFetcher {
       this.tracked = this.providers.filter(
         (p): p is TrackedProvider =>
           p instanceof UniswapV2BaseProvider ||
-          p instanceof UniswapV3BaseProvider,
+          p instanceof UniswapV3BaseProvider ||
+          p instanceof UniswapV4BaseProvider,
       )
     }
     return this.tracked
   }
 
-  /** topic0 of every event the providers know */
+  /** the Uniswap V4 providers */
+  get v4Providers(): UniswapV4BaseProvider[] {
+    return this.trackedProviders.filter(
+      (p): p is UniswapV4BaseProvider => p instanceof UniswapV4BaseProvider,
+    )
+  }
+
+  /** the lowercase PoolManager addresses of the Uniswap V4 providers */
+  get poolManagers(): string[] {
+    return this.v4Providers.map((p) => p.getPoolManager().toLowerCase())
+  }
+
+  /** topic0 of every event the providers know, the Uniswap V4 Initialize among them */
   get topics(): Hex[] {
     return this.eventsAbi.map((item) => toEventSelector(item as any))
+  }
+
+  /** topic0 of the PoolManager events of a cached Uniswap V4 pool, what the V4 logs subscription takes */
+  get v4Topics(): Hex[] {
+    return [...new Set(this.v4Providers.flatMap((p) => p.updateTopics))]
   }
 
   /** the slipstream fee module addresses, their logs change the pool fees */
@@ -411,10 +460,17 @@ export class RainDataFetcherStream extends RainDataFetcher {
     this.ready = undefined
     const logs = this.subscription
     const heads = this.headsSubscription
+    const v4 = this.v4Subscription
     this.subscription = undefined
     this.headsSubscription = undefined
+    this.v4Subscription = undefined
     await this.bounded(
-      Promise.allSettled([logs?.unsubscribe(), heads?.unsubscribe()]),
+      Promise.allSettled([
+        logs?.unsubscribe(),
+        heads?.unsubscribe(),
+        v4?.unsubscribe(),
+        ...this.takePending().map((sub) => sub.unsubscribe()),
+      ]),
     )
   }
 
@@ -498,7 +554,7 @@ export class RainDataFetcherStream extends RainDataFetcher {
     if (!this.open) return
     const pools = new Set(fresh.keys())
     const gap = this.queueGap(pools, undefined)
-    const grew = [...pools].some((address) => !this.subscribed.has(address))
+    const grew = [...pools].some((address) => !this.covers(address))
     const epoch = this.epoch
     // the read is due once the subscription covers them and the margin
     // passed, a read before that would end below where the stream begins
@@ -518,9 +574,16 @@ export class RainDataFetcherStream extends RainDataFetcher {
     )
   }
 
-  /** The parent's reset, and the stream's bookkeeping of the pools goes with them */
+  /**
+   * The parent's reset, and the stream's bookkeeping of the pools goes with
+   * them. A pool fetched again is not counted as covered by a logs
+   * subscription, so the fetch resubscribes: a resubscribe in flight may
+   * cover only the pools fetched after the reset
+   */
   override reset() {
     super.reset()
+    this.subscribed = new Set()
+    this.subscribedIds = new Set()
     this.admitted.clear()
     this.complete.clear()
     this.applied.clear()
@@ -581,6 +644,8 @@ export class RainDataFetcherStream extends RainDataFetcher {
   private moveOf(address: string, log: Log): PoolMove | undefined {
     const provider = this.trackedProviders.find((p) => p.pools.has(address))
     if (!provider) return undefined
+    if (provider instanceof UniswapV4BaseProvider)
+      return moveOf(provider.poolManagerEventsAbi as Abi, log, undefined, true)
     const pool = provider.pools.get(address) as
       | { reserve0?: unknown; reserve1?: unknown }
       | undefined
@@ -698,10 +763,12 @@ export class RainDataFetcherStream extends RainDataFetcher {
       }
     })
     // a factory log may have moved a fee module: the cover must hold the
-    // pools before a held log is replayed or the next log applies
+    // pools before a held log is replayed or the next log applies. A log
+    // of a Uniswap V4 pool is about its id, not about the PoolManager
     if (
       this.open &&
       !this.covering &&
+      pool === address &&
       this.factories.includes(address) &&
       !this.modulesCovered()
     ) {
@@ -816,32 +883,41 @@ export class RainDataFetcherStream extends RainDataFetcher {
 
   /**
    * Takes the queued work of the held pools out of the given providers'
-   * queues, the tick words of a univ3 provider and the balance reads of an
-   * algebra integral one, and hands back the function that puts it back
+   * queues, the tick words of a univ3 or univ4 provider and the balance
+   * reads of an algebra integral one, and hands back the function that puts
+   * it back
    * @param providers - The providers about to run their follow up
    */
   private parkHeld(providers: TrackedProvider[]): () => void {
     if (!this.holding.size) return () => {}
-    const held = (pool: RainV3Pool) => this.isHeld(pool)
+    const held = (pool: LivePool) => this.isHeld(pool)
     const restores: (() => void)[] = []
     providers.forEach((provider) => {
-      if (!(provider instanceof UniswapV3BaseProvider)) return
-      const words = provider.newTicksQueue.filter(([pool]) => held(pool))
-      if (words.length) {
-        provider.newTicksQueue = provider.newTicksQueue.filter(
-          ([pool]) => !held(pool),
-        )
-        // a read may have queued the pool again meanwhile, the words join
-        // that entry
-        restores.push(() =>
-          words.forEach(([pool, parked]) => {
-            const entry = provider.newTicksQueue.find(
-              ([queued]) => queued.address === pool.address,
-            )
-            if (!entry) provider.newTicksQueue.push([pool, parked])
-            else parked.forEach((w) => entry[1].includes(w) || entry[1].push(w))
-          }),
-        )
+      if (
+        provider instanceof UniswapV3BaseProvider ||
+        provider instanceof UniswapV4BaseProvider
+      ) {
+        const queue = provider as { newTicksQueue: [LivePool, number[]][] }
+        const words = queue.newTicksQueue.filter(([pool]) => held(pool))
+        if (words.length) {
+          queue.newTicksQueue = queue.newTicksQueue.filter(
+            ([pool]) => !held(pool),
+          )
+          // a read may have queued the pool again meanwhile, the words join
+          // that entry. A pool object a fetch replaced meanwhile is left
+          // out, the object that replaced it read its own words
+          restores.push(() =>
+            words.forEach(([pool, parked]) => {
+              if (this.poolOf(this.keyOf(pool)) !== pool) return
+              const entry = queue.newTicksQueue.find(
+                ([queued]) => queued === pool,
+              )
+              if (!entry) queue.newTicksQueue.push([pool, parked])
+              else
+                parked.forEach((w) => entry[1].includes(w) || entry[1].push(w))
+            }),
+          )
+        }
       }
       // the algebra integral balance re-reads, kept by duck type, the class
       // lives behind an import cycle
@@ -868,16 +944,21 @@ export class RainDataFetcherStream extends RainDataFetcher {
   }
 
   /** whether the pool's logs are held for a gap read, see holding */
-  private isHeld(pool: RainV3Pool): boolean {
-    return this.holding.has(pool.address.toLowerCase())
+  private isHeld(pool: LivePool): boolean {
+    return this.holding.has(this.keyOf(pool))
+  }
+
+  /** the key of a pool in the stream's maps, its lowercase address, or the id of a Uniswap V4 pool */
+  private keyOf(pool: LivePool): string {
+    return 'address' in pool ? pool.address.toLowerCase() : pool.id
   }
 
   /**
    * Marks the providers among the given that still have work after their
    * follow up read, so the next head's run takes them again, a log need not
-   * touch them: a univ3 provider whose tick words are still queued, its read
-   * failed, and a slipstream provider whose fee reset waits for a round at
-   * or past the change block
+   * touch them: a univ3 or univ4 provider whose tick words are still queued,
+   * its read failed, and a slipstream provider whose fee reset waits for a
+   * round at or past the change block
    */
   private remarkPending(providers: TrackedProvider[]) {
     providers.forEach((provider) => {
@@ -891,7 +972,8 @@ export class RainDataFetcherStream extends RainDataFetcher {
         // the module changed, every pool of the provider is touched
         this.mark(provider, 'all')
       } else if (
-        (provider instanceof UniswapV3BaseProvider &&
+        ((provider instanceof UniswapV3BaseProvider ||
+          provider instanceof UniswapV4BaseProvider) &&
           provider.newTicksQueue.some(([pool]) => !this.isHeld(pool))) ||
         withBalances.onSwapPluginFeeUpdatePools?.some(
           (pool) => !this.isHeld(pool),
@@ -1050,11 +1132,21 @@ export class RainDataFetcherStream extends RainDataFetcher {
     let created = false
     let until = end
     if (scoped.size) {
-      const addresses = [
-        ...this.factories,
-        ...this.feeModules,
-        ...scoped.keys(),
-      ] as `0x${string}`[]
+      const addresses = [...this.factories, ...this.feeModules] as Hex[]
+      // a Uniswap V4 pool is read by its id from its PoolManager, see
+      // UniswapV4BaseProvider.getPoolManagerLogs, the Initialize logs come
+      // with the factory logs
+      const ids = new Map<UniswapV4BaseProvider, string[]>()
+      scoped.forEach((_, key) => {
+        const v4 = this.v4Providers.find((provider) => provider.pools.has(key))
+        if (!v4) {
+          addresses.push(key as Hex)
+          return
+        }
+        const list = ids.get(v4)
+        if (list) list.push(key)
+        else ids.set(v4, [key])
+      })
       const slices: { from: bigint; to: bigint }[] = []
       for (let start = from + 1n; start <= end; ) {
         const stop =
@@ -1062,14 +1154,22 @@ export class RainDataFetcherStream extends RainDataFetcher {
         slices.push({ from: start, to: stop })
         start = stop + 1n
       }
+      // a slice is read when the logs of every pool kind in it are read
       const results = await Promise.allSettled(
         slices.map((slice) =>
-          this.web3Client.getLogs({
-            events: this.eventsAbi,
-            address: addresses,
-            fromBlock: slice.from,
-            toBlock: slice.to,
-          }),
+          Promise.all([
+            addresses.length
+              ? this.web3Client.getLogs({
+                  events: this.eventsAbi,
+                  address: addresses,
+                  fromBlock: slice.from,
+                  toBlock: slice.to,
+                })
+              : Promise.resolve([]),
+            ...[...ids].map(([provider, poolIds]) =>
+              provider.getPoolManagerLogs(poolIds, slice.from, slice.to),
+            ),
+          ]).then((parts) => parts.flat() as Log[]),
         ),
       )
       const logs: Log[] = []
@@ -1239,9 +1339,14 @@ export class RainDataFetcherStream extends RainDataFetcher {
   private uncovered(): boolean {
     let found = !this.modulesCovered()
     this.forEachPool((_, address) => {
-      if (!this.subscribed.has(address)) found = true
+      if (!this.covers(address)) found = true
     })
     return found
+  }
+
+  /** a logs subscription covers the pool, a Uniswap V4 pool by its id */
+  private covers(address: string): boolean {
+    return this.subscribed.has(address) || this.subscribedIds.has(address)
   }
 
   /** every fee module address is in the logs subscription */
@@ -1256,10 +1361,20 @@ export class RainDataFetcherStream extends RainDataFetcher {
    * fee module log of one pool (CustomFeeSet, ScalingFactorSet, ...) the
    * pool it names in its first topic, cached or not. A module wide fee
    * module log (DefaultFeeCapSet, ...) is about the module itself, it is
-   * never held and every read applies it
+   * never held and every read applies it. A PoolManager log is about the
+   * Uniswap V4 pool whose id is in its first topic, an Initialize log is
+   * about the PoolManager itself, as a PoolCreated log is about its factory
    */
   private poolOfLog(address: string, topics: readonly Hex[]): string {
     const lower = address.toLowerCase()
+    if (topics.length > 1 && this.poolManagers.includes(lower)) {
+      if (!this.initializeTopic) {
+        this.initializeTopic = toEventSelector(
+          UniswapV4EventsAbi.find((item) => item.name === 'Initialize')!,
+        )
+      }
+      if (topics[0] !== this.initializeTopic) return topics[1]!.toLowerCase()
+    }
     if (
       topics.length > 1 &&
       this.feeModules.includes(lower) &&
@@ -1389,44 +1504,112 @@ export class RainDataFetcherStream extends RainDataFetcher {
   }
 
   /**
-   * Opens a logs subscription on the factories, the fee modules and every
-   * pool, the previous one is dropped once the new one is up. One that
-   * comes up after a newer one, or in a later epoch, is dropped itself
+   * Opens the logs subscriptions: one on the factories (the PoolManagers
+   * among them), the fee modules and every pool that is not a Uniswap V4
+   * one, and while V4 pools are cached one on the PoolManagers with the ids
+   * of those pools in topic 1. The previous ones are dropped once the new
+   * ones are up. New ones that come up after newer ones, or in a later
+   * epoch, are dropped themselves. One that came up when the other failed
+   * is dropped with a warning, and one whose other subscribe never answers
+   * is dropped by the drop that follows, see takePending
    */
   private async subscribeLogs() {
     const subscribe = this.rawSubscribe()
     const epoch = this.epoch
     const generation = ++this.logsGeneration
     const pools = new Set<string>()
-    this.forEachPool((_, address) => pools.add(address))
+    const ids = new Set<string>()
+    this.forEachPool((_, address, provider) => {
+      if (provider instanceof UniswapV4BaseProvider) ids.add(address)
+      else pools.add(address)
+    })
     const modules = this.feeModules
     const address = [...this.factories, ...modules, ...pools]
-    const slot: { logs?: Subscription } = {}
-    slot.logs = await subscribe({
-      params: [
-        this.flashblocks ? 'pendingLogs' : 'logs',
-        { address, topics: [this.topics] },
-      ],
-      onData: (data) => {
-        if (slot.logs && this.subscription !== slot.logs) return
-        if (data?.result) this.onLog(data.result)
-      },
-      onError: (e) => {
-        if (!slot.logs || this.subscription !== slot.logs) return
-        this.onDrop(e)
-      },
-    })
-    if (this.epoch !== epoch || generation !== this.logsGeneration) {
-      void slot.logs.unsubscribe().catch(() => {})
+    const kind = this.flashblocks ? 'pendingLogs' : 'logs'
+    const slot: { logs?: Subscription; v4?: Subscription | undefined } = {}
+    // a subscription that came up waits in pendingSubscriptions for the
+    // other one to answer. Its frames apply meanwhile: the node can serve a
+    // log on it before it serves the copy on the old subscription, which the
+    // switch then ignores, and the dedupe skips the copies. Its errors are a
+    // drop. Once the call ends without making it current, or a drop takes
+    // it, it is ignored. One that answers after a drop or a stop is of an
+    // old stream, it goes at once
+    const pending = (sub: Subscription) => {
+      if (this.epoch !== epoch) void sub.unsubscribe().catch(() => {})
+      else this.pendingSubscriptions.add(sub)
+      return sub
+    }
+    const live = (sub: Subscription, current: Subscription | undefined) =>
+      sub === current || this.pendingSubscriptions.has(sub)
+    const [logs, v4] = await Promise.allSettled([
+      subscribe({
+        params: [kind, { address, topics: [this.topics] }],
+        onData: (data) => {
+          if (slot.logs && !live(slot.logs, this.subscription)) return
+          if (data?.result) this.onLog(data.result)
+        },
+        onError: (e) => {
+          if (!slot.logs || !live(slot.logs, this.subscription)) return
+          this.onDrop(e)
+        },
+      }).then((sub) => {
+        slot.logs = pending(sub)
+      }),
+      ids.size
+        ? subscribe({
+            params: [
+              kind,
+              { address: this.poolManagers, topics: [this.v4Topics, [...ids]] },
+            ],
+            onData: (data) => {
+              if (slot.v4 && !live(slot.v4, this.v4Subscription)) return
+              if (data?.result) this.onLog(data.result)
+            },
+            onError: (e) => {
+              if (!slot.v4 || !live(slot.v4, this.v4Subscription)) return
+              this.onDrop(e)
+            },
+          }).then((sub) => {
+            slot.v4 = pending(sub)
+          })
+        : Promise.resolve(undefined),
+    ])
+    // the ones a drop or a stop took meanwhile are dropped and told already
+    const kept = [slot.logs, slot.v4].filter(
+      (sub): sub is Subscription =>
+        sub !== undefined && this.pendingSubscriptions.has(sub),
+    )
+    kept.forEach((sub) => this.pendingSubscriptions.delete(sub))
+    const failed = [logs, v4].find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    if (failed && kept.length) {
+      const [up, down] =
+        kept[0] === slot.logs
+          ? ['logs', 'Uniswap V4 logs']
+          : ['Uniswap V4 logs', 'logs']
+      console.warn(
+        `pools stream ${up} subscription came up but the ${down} one failed, it is dropped, message: ${
+          failed.reason?.message ?? failed.reason
+        }`,
+      )
+    }
+    if (failed || this.epoch !== epoch || generation !== this.logsGeneration) {
+      kept.forEach((sub) => void sub.unsubscribe().catch(() => {}))
+      if (failed) throw failed.reason
       return
     }
     const previous = this.subscription
+    const previousV4 = this.v4Subscription
     this.subscription = slot.logs
+    this.v4Subscription = slot.v4
     this.subscribed = pools
+    this.subscribedIds = ids
     this.subscribedModules = modules
     // never awaited: a dead socket never answers an unsubscribe, and a
     // subscription that lives on only serves logs the ids reject
     void previous?.unsubscribe().catch(() => {})
+    void previousV4?.unsubscribe().catch(() => {})
   }
 
   /**
@@ -1474,10 +1657,14 @@ export class RainDataFetcherStream extends RainDataFetcher {
     this.clearStall()
     const logs = this.subscription
     const heads = this.headsSubscription
+    const v4 = this.v4Subscription
     this.subscription = undefined
     this.headsSubscription = undefined
+    this.v4Subscription = undefined
     void logs?.unsubscribe().catch(() => {})
     void heads?.unsubscribe().catch(() => {})
+    void v4?.unsubscribe().catch(() => {})
+    this.takePending().forEach((sub) => void sub.unsubscribe().catch(() => {}))
     // what was going up may never settle on a dead socket
     this.subscribing = undefined
     this.queued = undefined
@@ -1500,6 +1687,22 @@ export class RainDataFetcherStream extends RainDataFetcher {
     }, this.resubscribeDelay)
     // the wait must not keep the process alive on its own
     this.resubscribeTimer.unref?.()
+  }
+
+  /**
+   * Takes the logs subscriptions that came up while the other subscribe of
+   * their call had not answered, with a warning, for the caller to
+   * unsubscribe: the call may never settle, so it would never drop them
+   */
+  private takePending(): Subscription[] {
+    const pending = [...this.pendingSubscriptions]
+    this.pendingSubscriptions.clear()
+    if (pending.length) {
+      console.warn(
+        'pools stream logs subscription came up while the other one had not answered yet, it is dropped',
+      )
+    }
+    return pending
   }
 
   /** Starts the stall watch over, a silent socket death serves no heads */
@@ -1544,10 +1747,12 @@ export class RainDataFetcherStream extends RainDataFetcher {
     return undefined
   }
 
-  private forEachPool(fn: (pool: LivePool, address: string) => void) {
+  private forEachPool(
+    fn: (pool: LivePool, address: string, provider: TrackedProvider) => void,
+  ) {
     this.trackedProviders.forEach((provider) =>
       provider.pools.forEach((pool, address) =>
-        fn(pool, address.toLowerCase()),
+        fn(pool, address.toLowerCase(), provider),
       ),
     )
   }
