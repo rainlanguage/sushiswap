@@ -1,3 +1,4 @@
+export * from './Comfy.js'
 export * from './CurveProvider.js'
 export * from './LiquidityProvider.js'
 export * from './NativeWrapProvider.js'

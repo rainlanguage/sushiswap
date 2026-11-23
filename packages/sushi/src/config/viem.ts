@@ -596,6 +596,33 @@ export const robinhood = {
   },
 } as const
 
+export const zeroG = {
+  id: ChainId.ZEROG,
+  name: '0G Mainnet',
+  network: '0g',
+  nativeCurrency: { name: '0G', symbol: '0G', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://evmrpc.0g.ai'],
+    },
+    public: {
+      http: ['https://evmrpc.0g.ai'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: '0G Chain Explorer',
+      url: 'https://chainscan.0g.ai',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11' as Address,
+      blockCreated: 6546802,
+    },
+  },
+} as const
+
 export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.ARBITRUM_NOVA]: http(arbitrumNova.rpcUrls.default.http[0]),
   [ChainId.ARBITRUM]: http(arbitrum.rpcUrls.default.http[0]),
@@ -636,6 +663,7 @@ export const publicTransports: Record<ChainId, Transport> = {
   [ChainId.FLARE]: http(flare.rpcUrls.default.http[0]),
   [ChainId.BERA]: http(berachain.rpcUrls.default.http[0]),
   [ChainId.ROBINHOOD]: http(robinhood.rpcUrls.default.http[0]),
+  [ChainId.ZEROG]: http(zeroG.rpcUrls.default.http[0]),
   /* Testnets */ // TODO: add testnet transports
   [ChainId.ARBITRUM_TESTNET]: http(arbitrumSepolia.rpcUrls.default.http[0]),
   [ChainId.AVALANCHE_TESTNET]: http(avalancheFuji.rpcUrls.default.http[0]),
@@ -873,6 +901,10 @@ export const publicClientConfig = {
   [ChainId.ROBINHOOD]: {
     chain: robinhood as Chain,
     transport: publicTransports[ChainId.ROBINHOOD],
+  },
+  [ChainId.ZEROG]: {
+    chain: zeroG as Chain,
+    transport: publicTransports[ChainId.ZEROG],
   },
 
   /* Testnets */

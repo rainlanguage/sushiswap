@@ -19,10 +19,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChainId } from '../../chain/constants.js'
 import { Token } from '../../currency/index.js'
 import { AerodromeSlipstreamProvider } from '../liquidity-providers/AerodromeSlipstream.js'
+import { ComfyProvider } from '../liquidity-providers/Comfy.js'
 import { UniswapV2Provider } from '../liquidity-providers/UniswapV2.js'
 import { UniswapV3Provider } from '../liquidity-providers/UniswapV3.js'
 import { UniswapV4Provider } from '../liquidity-providers/UniswapV4.js'
 import type { UniswapV4PoolState } from '../liquidity-providers/UniswapV4Base.js'
+import {
+  PancakeSwapInfinityCLEventsAbi,
+  pancakeSwapInfinityCLParameters,
+} from './PancakeSwapInfinityCLBase.js'
 import { RainDataFetcher } from './RainDataFetcher.js'
 import {
   RainDataFetcherStream,
@@ -72,6 +77,10 @@ const V4_B = `0x${'b4'.repeat(32)}` as Hex
 const V4_C = `0x${'c4'.repeat(32)}` as Hex
 const V4_D = `0x${'d4'.repeat(32)}` as Hex
 const V4_INITIALIZE = toEventSelector(UniswapV4EventsAbi[0])
+/** PancakeSwap Infinity CL pool ids */
+const INF_A = `0x${'a7'.repeat(32)}` as Hex
+const INF_B = `0x${'b7'.repeat(32)}` as Hex
+const INFINITY_INITIALIZE = toEventSelector(PancakeSwapInfinityCLEventsAbi[0])
 
 const EVENTS = {
   swap: parseAbiItem(
@@ -99,6 +108,10 @@ const EVENTS = {
   v4Initialize: UniswapV4EventsAbi[0],
   v4Swap: UniswapV4EventsAbi[1],
   v4ModifyLiquidity: UniswapV4EventsAbi[2],
+  infinityInitialize: PancakeSwapInfinityCLEventsAbi[0],
+  infinitySwap: PancakeSwapInfinityCLEventsAbi[1],
+  infinityModifyLiquidity: PancakeSwapInfinityCLEventsAbi[2],
+  infinityDynamicLPFeeUpdated: PancakeSwapInfinityCLEventsAbi[4],
 }
 
 let nextTx = 1
@@ -265,9 +278,12 @@ beforeEach(() => {
  * a stream fetcher with one univ3 pool (A, block 10) and one univ2 pool
  * (B, block 12), no rpc: the ws subscribe, the head and the log read are
  * mocks. the read client's head follows the fed heads, less a lag. With v4
- * a Uniswap V4 provider holds the pool V4_A at block 10
+ * a Uniswap V4 provider holds the pool V4_A at block 10, with infinity the
+ * comfy PancakeSwap Infinity CL provider holds the pool INF_A at block 10
  */
-function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
+function setup(
+  options: { slipstream?: boolean; v4?: boolean; infinity?: boolean } = {},
+) {
   const v3 = new UniswapV3Provider(ChainId.BASE, client)
   const v2 = new UniswapV2Provider(ChainId.BASE, client)
   // the follow up reads are rpc calls, the tests check they are asked
@@ -312,22 +328,34 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
   const manager = v4.getPoolManager().toLowerCase() as Address
   const poolV4 = v4Pool(V4_A, 10n)
   v4.pools.set(V4_A, poolV4)
+  const infinity = new ComfyProvider(ChainId.ZEROG, client)
+  infinity.afterProcessLog = vi.fn(async () => {})
+  const infinityManager = infinity.getPoolManager().toLowerCase() as Address
+  const poolInfinity = v4Pool(INF_A, 10n)
+  infinity.pools.set(INF_A, poolInfinity)
   const fetcher = new RainDataFetcherStream(ChainId.BASE, client)
   // the logs the read serves, filtered by the asked range and addresses
   const readable: Log[] = []
-  // the PoolManager logs of the given ids, an Initialize log comes with the
+  // the Initialize topic of each pool manager
+  const initializeOf = new Map<string, Hex>([
+    [manager, V4_INITIALIZE],
+    [infinityManager, INFINITY_INITIALIZE],
+  ])
+  // the pool manager logs of the given ids, an Initialize log comes with the
   // factory logs
-  v4.getPoolManagerLogs = vi.fn(
-    async (ids: string[], fromBlock: bigint, toBlock: bigint) =>
+  const poolManagerLogs = (address: Address) =>
+    vi.fn(async (ids: string[], fromBlock: bigint, toBlock: bigint) =>
       readable.filter(
         (log) =>
           log.blockNumber! >= fromBlock &&
           log.blockNumber! <= toBlock &&
-          log.address.toLowerCase() === manager &&
-          log.topics[0] !== V4_INITIALIZE &&
+          log.address.toLowerCase() === address &&
+          log.topics[0] !== initializeOf.get(address) &&
           ids.includes(log.topics[1]!),
       ),
-  )
+    )
+  v4.getPoolManagerLogs = poolManagerLogs(manager)
+  infinity.getPoolManagerLogs = poolManagerLogs(infinityManager)
   let failReads = 0
   let failSliceFrom: bigint | undefined
   let holdReads: ((value: Log[]) => void)[] | undefined
@@ -345,9 +373,9 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
         log.blockNumber! >= args.fromBlock &&
         log.blockNumber! <= args.toBlock &&
         args.address.includes(log.address.toLowerCase()) &&
-        // of the PoolManager events only the Initialize is in the read's events
-        (log.address.toLowerCase() !== manager ||
-          log.topics[0] === V4_INITIALIZE),
+        // of the pool manager events only the Initialize is in the read's events
+        (!initializeOf.has(log.address.toLowerCase()) ||
+          log.topics[0] === initializeOf.get(log.address.toLowerCase())),
     )
     if (holdReads)
       return new Promise<Log[]>((r) => holdReads!.push(() => r(logs)))
@@ -361,6 +389,7 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
       v2,
       ...(options.slipstream ? [slip] : []),
       ...(options.v4 ? [v4] : []),
+      ...(options.infinity ? [infinity] : []),
     ],
     web3Client: { getBlockNumber, getLogs },
     eventsAbi: [
@@ -368,6 +397,7 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
       ...UniV2EventsAbi,
       ...(options.slipstream ? (slip.eventsAbi as any[]) : []),
       ...(options.v4 ? v4.eventsAbi : []),
+      ...(options.infinity ? infinity.eventsAbi : []),
     ],
     factories: [
       v3.factory[ChainId.BASE]!.toLowerCase(),
@@ -376,6 +406,7 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
         ? [slip.factory[ChainId.BASE]!.toLowerCase()]
         : []),
       ...(options.v4 ? [manager] : []),
+      ...(options.infinity ? [infinityManager] : []),
     ],
   })
   const unsubscribe = vi.fn(async () => true)
@@ -466,6 +497,9 @@ function setup(options: { slipstream?: boolean; v4?: boolean } = {}) {
     poolA,
     poolB,
     poolV4,
+    infinity,
+    infinityManager,
+    poolInfinity,
     readable,
     readable_,
     getLogs,
@@ -3345,5 +3379,150 @@ describe('RainDataFetcherStream Uniswap V4 pools', () => {
     expect(s.fetcher.v4Subscription).toBeDefined()
     old.onData({ result: raw })
     expect(s.poolA.liquidity).toBe(6n)
+  })
+})
+
+describe('RainDataFetcherStream PancakeSwap Infinity CL pools', () => {
+  /** a Swap of the pool with the given swapper deltas, it sets the liquidity to 7 */
+  const infinitySwap = (
+    manager: Address,
+    id: Hex,
+    amount0: bigint,
+    amount1: bigint,
+    blockNumber: bigint,
+    index = 0,
+  ) =>
+    rawLog(
+      manager,
+      EVENTS.infinitySwap,
+      {
+        id,
+        sender: manager,
+        amount0,
+        amount1,
+        sqrtPriceX96: 3n * 2n ** 96n,
+        liquidity: 7n,
+        tick: 0,
+        fee: 0,
+        protocolFee: 0,
+      },
+      blockNumber,
+      { index },
+    )
+  const infinityInitialize = (manager: Address, id: Hex, blockNumber: bigint) =>
+    rawLog(
+      manager,
+      EVENTS.infinityInitialize,
+      {
+        id,
+        currency0: zeroAddress,
+        currency1: USDC.address,
+        hooks: zeroAddress,
+        fee: 500,
+        parameters: pancakeSwapInfinityCLParameters(0, 10),
+        sqrtPriceX96: 2n ** 96n,
+        tick: 0,
+      },
+      blockNumber,
+    )
+
+  it('takes the Infinity CL Initialize logs on the logs subscription, the pool manager is a factory, and the cached Infinity CL pools by id on the V4 one beside the V4 pools', async () => {
+    const s = setup({ v4: true, infinity: true })
+    await started(s)
+    const [, filter] = s.last('logs').params
+    expect(filter.address).toEqual([...s.fetcher.factories, POOL_A, POOL_B])
+    expect(s.fetcher.factories).toContain(s.infinityManager)
+    expect(filter.topics[0]).toContain(V4_INITIALIZE)
+    expect(filter.topics[0]).toContain(INFINITY_INITIALIZE)
+    expect(filter.topics[0]).not.toContain(
+      toEventSelector(PancakeSwapInfinityCLEventsAbi[1]),
+    )
+    // ModifyLiquidity and ProtocolFeeUpdated have the same topic in both
+    const topics = [
+      ...new Set([...s.v4.updateTopics, ...s.infinity.updateTopics]),
+    ]
+    expect(topics).toHaveLength(5)
+    expect(s.lastV4().params).toEqual([
+      'logs',
+      {
+        address: [s.manager, s.infinityManager],
+        topics: [topics, [V4_A, INF_A]],
+      },
+    ])
+    expect(s.fetcher.subscribedIds).toEqual(new Set([V4_A, INF_A]))
+    expect(s.fetcher.admitted.get(INF_A)).toBe(s.poolInfinity)
+  })
+
+  it('reads the gap of an Infinity CL pool by its id, then applies the Swap and DynamicLPFeeUpdated logs of the V4 subscription, the direction off the swapper deltas', async () => {
+    const s = setup({ infinity: true })
+    s.readable_(
+      rawLog(
+        s.infinityManager,
+        EVENTS.infinityModifyLiquidity,
+        {
+          id: INF_A,
+          sender: s.infinityManager,
+          tickLower: -10,
+          tickUpper: 10,
+          liquidityDelta: 5n,
+          salt: `0x${'0'.repeat(64)}`,
+        },
+        12n,
+      ),
+    )
+    const onPoolChange = vi.fn()
+    const starting = s.fetcher.start(s.wsClient, {
+      resubscribeDelay: 1,
+      stallTimeout: 0,
+      onPoolChange,
+    })
+    await tick()
+    s.feedHead(15n + STREAM_HEAD_MARGIN)
+    await starting
+    expect(s.infinity.getPoolManagerLogs).toHaveBeenCalledWith(
+      [INF_A],
+      11n,
+      17n,
+    )
+    expect(s.poolInfinity.liquidity).toBe(6n)
+    expect(s.fetcher.complete.get(INF_A)).toBe(17n)
+    // the swapper paid token0 and got token1, the pool received token0
+    s.feedV4Log(infinitySwap(s.infinityManager, INF_A, -5n, 3n, 18n))
+    expect(s.poolInfinity.sqrtPriceX96).toBe(3n * 2n ** 96n)
+    expect(s.poolInfinity.liquidity).toBe(7n)
+    expect(onPoolChange.mock.calls.map((c: any[]) => [c[0], c[2]])).toEqual([
+      [INF_A, true],
+    ])
+    s.feedV4Log(
+      rawLog(
+        s.infinityManager,
+        EVENTS.infinityDynamicLPFeeUpdated,
+        { id: INF_A, dynamicLPFee: 3000 },
+        19n,
+      ),
+    )
+    expect(s.poolInfinity.lpFee).toBe(3000)
+    expect(s.fetcher.held).toEqual([])
+  })
+
+  it('reports the Initialize of a null Infinity CL pool as a created pool, it is about the pool manager', async () => {
+    const s = setup({ v4: true, infinity: true })
+    s.infinity.nullPools.set(INF_B, 1)
+    const onPoolCreated = vi.fn()
+    const starting = s.fetcher.start(s.wsClient, {
+      resubscribeDelay: 1,
+      stallTimeout: 0,
+      onPoolCreated,
+    })
+    await tick()
+    s.feedHead(15n + STREAM_HEAD_MARGIN)
+    await starting
+    s.feedLog(infinityInitialize(s.infinityManager, INF_B, 18n))
+    await tick()
+    expect(s.infinity.nullPools.has(INF_B)).toBe(false)
+    expect(onPoolCreated).toHaveBeenCalledTimes(1)
+    // an Initialize is about the pool manager, as a PoolCreated is about its factory
+    expect(s.fetcher.applied.get(s.infinityManager)?.get(18n)?.size).toBe(1)
+    expect(s.fetcher.applied.has(INF_B)).toBe(false)
   })
 })

@@ -1,4 +1,5 @@
 import {
+  type AbiEvent,
   type Hex,
   type Log,
   formatLog,
@@ -53,9 +54,16 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
    * event: the PoolManager is in that read as a factory is. The logs of the
    * pools are read by pool id, see getPoolManagerLogs
    */
-  eventsAbi = UniswapV4EventsAbi.filter((e) => e.name === 'Initialize')
-  /** the PoolManager events this provider applies, see processLog */
-  poolManagerEventsAbi = UniswapV4EventsAbi
+  eventsAbi: readonly AbiEvent[] = UniswapV4EventsAbi.filter(
+    (e) => e.name === 'Initialize',
+  )
+  /**
+   * the PoolManager events this provider applies, see processLog. A pool
+   * manager of another design gives its own events: processLog reads them by
+   * these names and takes the arguments it reads of these, an event more is
+   * applied by an override of processLog
+   */
+  poolManagerEventsAbi: readonly AbiEvent[] = UniswapV4EventsAbi
   /** the tick table words to read for a pool at afterProcessLog */
   newTicksQueue: [UniswapV4PoolState, number[]][] = []
   /** the tick word reads in flight, see afterProcessLog and addTick */
@@ -99,7 +107,7 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
     return log.topics[1]?.toLowerCase() ?? undefined
   }
 
-  /** topic0 of the PoolManager events of a pool that exists: Swap, ModifyLiquidity and ProtocolFeeUpdated */
+  /** topic0 of the PoolManager events of a pool that exists, every event of poolManagerEventsAbi but Initialize */
   get updateTopics(): Hex[] {
     return this.poolManagerEventsAbi
       .filter((e) => e.name !== 'Initialize')
@@ -107,10 +115,10 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
   }
 
   /**
-   * Reads the Swap, ModifyLiquidity and ProtocolFeeUpdated logs of the given
-   * cached pools from fromBlock to toBlock, filtered by their ids in topic 1,
-   * in chunks of logIdsPerRead ids. The Initialize logs come with the
-   * factory logs, see eventsAbi. Throws when a read fails
+   * Reads the logs of updateTopics of the given cached pools from fromBlock
+   * to toBlock, filtered by their ids in topic 1, in chunks of logIdsPerRead
+   * ids. The Initialize logs come with the factory logs, see eventsAbi.
+   * Throws when a read fails
    */
   async getPoolManagerLogs(
     ids: string[],
@@ -147,7 +155,10 @@ export abstract class UniswapV4BaseProvider extends _UniswapV4BaseProvider {
     if (id === undefined) return false
     let event
     try {
-      event = parseEventLogs({ logs: [log], abi: this.poolManagerEventsAbi })[0]
+      event = parseEventLogs({
+        logs: [log],
+        abi: this.poolManagerEventsAbi as typeof UniswapV4EventsAbi,
+      })[0]
     } catch {
       return false
     }

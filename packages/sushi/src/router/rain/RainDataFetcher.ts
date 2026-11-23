@@ -21,6 +21,7 @@ import { BladeSwapProvider } from '../liquidity-providers/BladeSwap.js'
 import { BlastDEXProvider } from '../liquidity-providers/BlastDEX.js'
 import { BlazeSwapProvider } from '../liquidity-providers/BlazeSwap.js'
 import { CORExProvider } from '../liquidity-providers/COREx.js'
+import { ComfyProvider } from '../liquidity-providers/Comfy.js'
 import { CroDefiSwapProvider } from '../liquidity-providers/CroDefiSwap.js'
 import { DackieSwapV2Provider } from '../liquidity-providers/DackieSwapV2.js'
 import { DackieSwapV3Provider } from '../liquidity-providers/DackieSwapV3.js'
@@ -232,6 +233,7 @@ export class RainDataFetcher extends DataFetcher {
       UniswapV2Provider,
       UniswapV3Provider,
       UniswapV4Provider,
+      ComfyProvider,
       VelodromeSlipstreamProvider,
       VelodromeSlipstreamV2Provider,
       UpV3Provider,

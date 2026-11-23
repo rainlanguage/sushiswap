@@ -677,6 +677,23 @@ export default [
     shortName: 'ISLM',
   },
   {
+    chainId: 16661,
+    explorers: [
+      {
+        name: '0G Chain Explorer',
+        url: 'https://chainscan.0g.ai',
+        standard: 'EIP3091',
+      },
+    ],
+    nativeCurrency: {
+      name: '0G',
+      symbol: '0G',
+      decimals: 18,
+    },
+    name: '0G Mainnet',
+    shortName: '0g',
+  },
+  {
     chainId: 42161,
     explorers: [
       {

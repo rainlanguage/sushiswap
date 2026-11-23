@@ -1,5 +1,6 @@
 import {
   type Address,
+  type ContractFunctionParameters,
   type Hex,
   type PublicClient,
   encodeAbiParameters,
@@ -674,7 +675,6 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
     pools: { id: Hex; tickSpacing: number; words: number[] }[],
     blockNumber: bigint,
   ): Promise<(Map<number, CLTick[]> | undefined)[] | undefined> {
-    const stateView = this.getStateView()
     const multicallAddress = this.client.chain?.contracts?.multicall3
       ?.address as Address
     const words = pools.flatMap((pool, index) =>
@@ -687,16 +687,7 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
         multicallAddress,
         allowFailure: true,
         blockNumber,
-        contracts: words.map(
-          ({ id, word }) =>
-            ({
-              address: stateView,
-              chainId: this.chainId,
-              abi: uniswapV4StateViewAbi_getTickBitmap,
-              functionName: 'getTickBitmap',
-              args: [id, word],
-            }) as const,
-        ),
+        contracts: words.map(({ id, word }) => this.tickBitmapRead(id, word)),
       })
       .catch((e) => {
         console.warn(
@@ -713,7 +704,7 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
     const tickReads: { index: number; word: number; tick: number }[] = []
     bitmaps.forEach((r, i) => {
       const { index, word } = words[i]!
-      const bitmap = r.result
+      const bitmap = r.result as bigint | undefined
       if (bitmap === undefined) {
         failed[index] = true
         return
@@ -737,15 +728,8 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
               multicallAddress,
               allowFailure: true,
               blockNumber,
-              contracts: tickReads.map(
-                ({ index, tick }) =>
-                  ({
-                    address: stateView,
-                    chainId: this.chainId,
-                    abi: uniswapV4StateViewAbi_getTickLiquidity,
-                    functionName: 'getTickLiquidity',
-                    args: [pools[index]!.id, tick],
-                  }) as const,
+              contracts: tickReads.map(({ index, tick }) =>
+                this.tickLiquidityRead(pools[index]!.id, tick),
               ),
             })
             .catch((e) => {
@@ -761,7 +745,8 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
     // the ticks of a word come in bit order, so each word is sorted
     ticks.forEach((r, i) => {
       const { index, word, tick } = tickReads[i]!
-      const liquidityNet = r.result?.[1]
+      const liquidityNet =
+        r.result === undefined ? undefined : this.liquidityNetOf(r.result)
       if (liquidityNet === undefined) {
         failed[index] = true
         return
@@ -769,6 +754,31 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
       result[index]!.get(word)!.push({ index: tick, DLiquidity: liquidityNet })
     })
     return result.map((words, i) => (failed[i] ? undefined : words))
+  }
+
+  /** the multicall read of a tick table word of a pool, StateView getTickBitmap */
+  tickBitmapRead(id: Hex, word: number): ContractFunctionParameters {
+    return {
+      address: this.getStateView(),
+      abi: uniswapV4StateViewAbi_getTickBitmap,
+      functionName: 'getTickBitmap',
+      args: [id, word],
+    }
+  }
+
+  /** the multicall read of an initialized tick of a pool, StateView getTickLiquidity */
+  tickLiquidityRead(id: Hex, tick: number): ContractFunctionParameters {
+    return {
+      address: this.getStateView(),
+      abi: uniswapV4StateViewAbi_getTickLiquidity,
+      functionName: 'getTickLiquidity',
+      args: [id, tick],
+    }
+  }
+
+  /** the net liquidity of a tick from the result of tickLiquidityRead */
+  liquidityNetOf(result: unknown): bigint | undefined {
+    return (result as readonly [bigint, bigint])[1]
   }
 
   /**
@@ -795,13 +805,13 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
   }
 
   /**
-   * Builds the tines pool and its pool code of a cached pool, undefined while
-   * the ticks around its price are not read, see tickList
+   * Builds the tines pool of a cached pool, undefined while the ticks around
+   * its price are not read, see tickList
    */
-  poolCodeOf(state: UniswapV4PoolState): PoolCode | undefined {
+  tinesPoolOf(state: UniswapV4PoolState): UniV4Pool | undefined {
     const ticks = this.tickList(state)
     if (!ticks) return undefined
-    const pool = new UniV4Pool(
+    return new UniV4Pool(
       state.id,
       this.getPoolManager(),
       state.token0,
@@ -815,6 +825,12 @@ export abstract class UniswapV4BaseProvider extends LiquidityProvider {
       undefined,
       state.tick,
     )
+  }
+
+  /** Builds the pool code of a cached pool, undefined while its tines pool is not built, see tinesPoolOf */
+  poolCodeOf(state: UniswapV4PoolState): PoolCode | undefined {
+    const pool = this.tinesPoolOf(state)
+    if (!pool) return undefined
     return new UniV4PoolCode(
       pool,
       {

@@ -1,7 +1,7 @@
 import type { MultiRoute, RPool, RouteLeg } from '../../tines/index.js'
 import { LiquidityProviders } from '../liquidity-providers/index.js'
 
-/** the pool types of a swap in a route processor route, RouteProcessor6 adds UniV4 */
+/** the pool types of a swap in a route processor route, RouteProcessor6 adds UniV4 and PancakeSwapInfinityCL */
 export enum RPPoolType {
   UniV2 = 0,
   UniV3 = 1,
@@ -10,6 +10,7 @@ export enum RPPoolType {
   Trident = 4,
   Curve = 5,
   UniV4 = 6,
+  PancakeSwapInfinityCL = 7,
 }
 
 // RPool extention for RP coding
@@ -59,7 +60,7 @@ export abstract class PoolCode {
     return this.getSwapCodeForRouteProcessor2(leg, route, to)
   }
 
-  // RouteProcessor6 takes the RouteProcessor4 code of every pool type but UniV4
+  // RouteProcessor6 takes the RouteProcessor4 code of every pool type but UniV4 and PancakeSwapInfinityCL
   getSwapCodeForRouteProcessor6(
     leg: RouteLeg,
     route: MultiRoute,

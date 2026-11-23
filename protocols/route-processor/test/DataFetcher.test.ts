@@ -126,6 +126,7 @@ const excludedChains = [
   ChainId.PALM,
   ChainId.BOBA_AVAX,
   ChainId.ZKSYNC_ERA,
+  ChainId.ZEROG,
 ]
 
 const chainIds = Object.values(ChainId).filter((v) => {
