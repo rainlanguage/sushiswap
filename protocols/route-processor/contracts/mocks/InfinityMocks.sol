@@ -33,8 +33,13 @@ interface IMockInfinityVault {
   function sync(address currency) external;
 }
 
+interface IMockERC20 {
+  function balanceOf(address account) external view returns (uint256);
+}
+
 /// @notice An Infinity vault and CL pool manager in one that gives the deltas a test sets: lock calls back, a
-/// swap returns the swap delta and records the balance deltas of the caller, sync, settle and take do nothing
+/// swap returns the swap delta and records the balance deltas of the caller. Sync, settle and take move no
+/// tokens, they record what is paid and taken: a settle pays the native value, or the ERC20 tokens sent since sync
 contract MockInfinityVault {
   /// @notice the delta a swap returns
   int128 public swapAmount0;
@@ -44,6 +49,16 @@ contract MockInfinityVault {
   int256 public delta1;
   /// @notice the balance deltas by settler and currency
   mapping(address => mapping(address => int256)) private deltas;
+  /// @notice the currency of the last sync and its balance then, the native currency is address(0)
+  address private syncedCurrency;
+  uint256 private syncedBalance;
+  /// @notice the amounts the callers paid, by currency
+  mapping(address => uint256) public settled;
+  /// @notice the last take and the number of takes
+  address public takeCurrency;
+  address public takeTo;
+  uint256 public takeAmount;
+  uint256 public takes;
 
   function setDeltas(int128 _swapAmount0, int128 _swapAmount1, int256 _delta0, int256 _delta1) external {
     swapAmount0 = _swapAmount0;
@@ -75,13 +90,24 @@ contract MockInfinityVault {
     return deltas[settler][currency];
   }
 
-  function sync(address) external {}
-
-  function settle() external payable returns (uint256) {
-    return msg.value;
+  function sync(address currency) external {
+    syncedCurrency = currency;
+    syncedBalance = currency == address(0) ? 0 : IMockERC20(currency).balanceOf(address(this));
   }
 
-  function take(address, address, uint256) external {}
+  function settle() external payable returns (uint256 paid) {
+    address currency = syncedCurrency;
+    paid = currency == address(0) ? msg.value : IMockERC20(currency).balanceOf(address(this)) - syncedBalance;
+    settled[currency] += paid;
+    syncedCurrency = address(0);
+  }
+
+  function take(address currency, address to, uint256 amount) external {
+    takeCurrency = currency;
+    takeTo = to;
+    takeAmount = amount;
+    takes += 1;
+  }
 }
 
 /// @notice Leaves a currency synced on an Infinity vault and then makes a call, in one transaction: a lock with

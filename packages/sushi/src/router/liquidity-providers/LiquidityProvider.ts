@@ -288,3 +288,8 @@ export const UniV3LiquidityProviders: LiquidityProviders[] = [
   LiquidityProviders.Hydrex,
   LiquidityProviders.UpV3,
 ]
+
+export const UniV4LiquidityProviders: LiquidityProviders[] = [
+  LiquidityProviders.UniswapV4,
+  LiquidityProviders.Comfy,
+]

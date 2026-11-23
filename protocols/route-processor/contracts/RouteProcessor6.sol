@@ -541,6 +541,7 @@ contract RouteProcessor6 is Ownable {
     address to;
   }
   using PoolManagerAdditionalLibrary for IPoolManager;
+  using SettlementLibrary for ISettlement;
   using BalanceDeltaLibrary for BalanceDelta;
 
   /// @notice UniswapV4 pool swap
@@ -592,42 +593,56 @@ contract RouteProcessor6 is Ownable {
     UniV4CallbackData memory data = abi.decode(rawData, (UniV4CallbackData));
     BalanceDelta delta = manager.swap(data.key, data.params, data.hookData);
 
-    // the RP settles and takes the balance deltas the manager holds for it, unlock needs them at zero. The manager
-    // comes from the route, and a hook or a settleFor can change those deltas, so the checks below bind them to
-    // the swap of amountIn: the input delta is the full input and the delta of the swap, the output delta is no debt
     int256 deltaAfter0 = manager.currencyDelta(data.key.currency0, address(this));
     int256 deltaAfter1 = manager.currencyDelta(data.key.currency1, address(this));
+    checkSwapDeltas(data.params.zeroForOne, data.params.amountSpecified, delta, deltaAfter0, deltaAfter1);
+    settleAndTake(ISettlement(msg.sender), data.key.currency0, data.key.currency1, deltaAfter0, deltaAfter1, data.to);
+    return '';
+  }
 
-    // the swap must take the full input, a partial fill at the price limit would leave the rest on the RP
-    if (data.params.zeroForOne) {
+  /// @notice Checks the balance deltas a Uniswap V4 PoolManager or a PancakeSwap Infinity Vault holds for the RP
+  /// after a swap. The RP settles and takes these deltas, the unlock or the lock needs them at zero. The manager and
+  /// the vault come from the route, and a hook or a settleFor can change the deltas, so the checks bind them to the
+  /// swap of amountIn: the input delta is the full input and the delta of the swap, the output delta is no debt. A
+  /// partial fill at the price limit would leave the rest of the input on the RP, it reverts
+  function checkSwapDeltas(
+    bool zeroForOne,
+    int256 amountSpecified,
+    BalanceDelta delta,
+    int256 deltaAfter0,
+    int256 deltaAfter1
+  ) private pure {
+    if (zeroForOne) {
       require(
-          deltaAfter0 == data.params.amountSpecified,
+          deltaAfter0 == amountSpecified,
           "deltaAfter0 is not equal to data.params.amountSpecified"
       );
       require(delta.amount0() == deltaAfter0, "delta.amount0() is not equal to deltaAfter0");
       require(deltaAfter1 >= 0, "deltaAfter1 is not greater than or equal to 0");
     } else {
       require(
-          deltaAfter1 == data.params.amountSpecified,
+          deltaAfter1 == amountSpecified,
           "deltaAfter1 is not equal to data.params.amountSpecified"
       );
       require(delta.amount1() == deltaAfter1, "delta.amount1() is not equal to deltaAfter1");
       require(deltaAfter0 >= 0, "deltaAfter0 is not greater than or equal to 0");
     }
+  }
 
-    if (deltaAfter0 < 0) {
-      manager.settle(data.key.currency0, uint256(-deltaAfter0));
-    }
-    if (deltaAfter1 < 0) {
-      manager.settle(data.key.currency1, uint256(-deltaAfter1));
-    }
-    if (deltaAfter0 > 0) {
-      manager.take(data.key.currency0, data.to, uint256(deltaAfter0));
-    }
-    if (deltaAfter1 > 0) {
-      manager.take(data.key.currency1, data.to, uint256(deltaAfter1));
-    }
-    return '';
+  /// @notice Pays what the RP owes and takes what it is owed to `to`, on a Uniswap V4 PoolManager or a PancakeSwap
+  /// Infinity Vault, they have the same sync, settle and take, see ISettlement
+  function settleAndTake(
+    ISettlement target,
+    Currency currency0,
+    Currency currency1,
+    int256 deltaAfter0,
+    int256 deltaAfter1,
+    address to
+  ) private {
+    if (deltaAfter0 < 0) target.settle(currency0, uint256(-deltaAfter0));
+    if (deltaAfter1 < 0) target.settle(currency1, uint256(-deltaAfter1));
+    if (deltaAfter0 > 0) target.take(currency0, to, uint256(deltaAfter0));
+    if (deltaAfter1 > 0) target.take(currency1, to, uint256(deltaAfter1));
   }
 
   struct InfinityCallbackData {
@@ -636,7 +651,6 @@ contract RouteProcessor6 is Ownable {
     bytes hookData;
     address to;
   }
-  using InfinityVaultLibrary for IInfinityVault;
 
   /// @notice PancakeSwap Infinity CL pool swap
   /// @param stream [vault, manager, tokenOut, fee, parameters, hooks, zeroForOne, hookData, to]
@@ -692,42 +706,10 @@ contract RouteProcessor6 is Ownable {
     InfinityCallbackData memory data = abi.decode(rawData, (InfinityCallbackData));
     BalanceDelta delta = IInfinityCLPoolManager(data.key.poolManager).swap(data.key, data.params, data.hookData);
 
-    // the RP settles and takes the balance deltas the vault holds for it, lock needs them at zero. The vault and
-    // the pool manager come from the route, and a hook or a settleFor can change those deltas, so the checks below
-    // bind them to the swap of amountIn: the input delta is the full input and the delta of the swap, the output
-    // delta is no debt
     int256 deltaAfter0 = vault.currencyDelta(address(this), data.key.currency0);
     int256 deltaAfter1 = vault.currencyDelta(address(this), data.key.currency1);
-
-    // the swap must take the full input, a partial fill at the price limit would leave the rest on the RP
-    if (data.params.zeroForOne) {
-      require(
-          deltaAfter0 == data.params.amountSpecified,
-          "deltaAfter0 is not equal to data.params.amountSpecified"
-      );
-      require(delta.amount0() == deltaAfter0, "delta.amount0() is not equal to deltaAfter0");
-      require(deltaAfter1 >= 0, "deltaAfter1 is not greater than or equal to 0");
-    } else {
-      require(
-          deltaAfter1 == data.params.amountSpecified,
-          "deltaAfter1 is not equal to data.params.amountSpecified"
-      );
-      require(delta.amount1() == deltaAfter1, "delta.amount1() is not equal to deltaAfter1");
-      require(deltaAfter0 >= 0, "deltaAfter0 is not greater than or equal to 0");
-    }
-
-    if (deltaAfter0 < 0) {
-      vault.settle(data.key.currency0, uint256(-deltaAfter0));
-    }
-    if (deltaAfter1 < 0) {
-      vault.settle(data.key.currency1, uint256(-deltaAfter1));
-    }
-    if (deltaAfter0 > 0) {
-      vault.take(data.key.currency0, data.to, uint256(deltaAfter0));
-    }
-    if (deltaAfter1 > 0) {
-      vault.take(data.key.currency1, data.to, uint256(deltaAfter1));
-    }
+    checkSwapDeltas(data.params.zeroForOne, data.params.amountSpecified, delta, deltaAfter0, deltaAfter1);
+    settleAndTake(ISettlement(msg.sender), data.key.currency0, data.key.currency1, deltaAfter0, deltaAfter1, data.to);
     return '';
   }
 }

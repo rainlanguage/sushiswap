@@ -2,7 +2,6 @@
 
 pragma solidity =0.8.25;
 
-import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Currency, IHooks, BalanceDelta} from './UniV4.sol';
 
 /// @notice The PoolKey of a PancakeSwap Infinity pool
@@ -52,23 +51,4 @@ interface IInfinityVault {
 
   /// @notice Pays what the caller owes, the tokens sent since sync or the native value
   function settle() external payable returns (uint256 paid);
-}
-
-library InfinityVaultLibrary {
-  using SafeERC20 for IERC20;
-
-  /// @notice Pays the vault the amount of the currency the caller owes
-  function settle(IInfinityVault vault, Currency currency, uint256 amount) internal {
-    if (Currency.unwrap(currency) == address(0)) {
-      // The synced currency stays for the whole transaction: if an earlier call synced an ERC20 and did not
-      // settle it, a settle with value reverts. The native sync clears it
-      vault.sync(currency);
-      vault.settle{value: amount}();
-    } else {
-      vault.sync(currency);
-      // a token that returns no bool (USDT) must not revert the swap
-      IERC20(Currency.unwrap(currency)).safeTransfer(address(vault), amount);
-      vault.settle();
-    }
-  }
 }

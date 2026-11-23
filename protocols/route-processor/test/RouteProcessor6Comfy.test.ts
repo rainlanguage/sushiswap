@@ -429,19 +429,19 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
   }
 
   /**
-   * Swaps amountIn of from to to through the 0G and BLANKET pool, with the
-   * vault and the pool manager of the route replaced by a mock that gives the
+   * The route of amountIn of from to to through the 0G and BLANKET pool, with
+   * the vault and the pool manager replaced by a new mock that gives the
    * deltas, and with no minimum output, the mock pays out nothing
    * @param deltas - the swap delta and the balance deltas of the RP:
    * [swapAmount0, swapAmount1, delta0, delta1], 0G is currency0
-   * @returns the revert message, undefined when the route went through
+   * @returns the mock, the calldata and the value of the RP call
    */
-  async function swapOnMock(
+  async function mockRoute(
     from: Type,
     to: Type,
     amountIn: bigint,
     deltas: [bigint, bigint, bigint, bigint],
-  ): Promise<string | undefined> {
+  ): Promise<{ mock: Address; data: Hex; value: bigint }> {
     const picked = pick([POOLS.blanket])
     const code = [...picked.values()][0] as PoolCode & { vault: Address }
     const mock = await deploy(MockInfinityVault)
@@ -489,23 +489,97 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
         mock.slice(2),
       ) as Hex
     expect(data).not.to.equal(params.data)
+    return { mock, data, value: params.value }
+  }
+
+  /**
+   * Calls the RP with the route of mockRoute
+   * @returns the revert message, undefined when the route went through
+   */
+  async function swapOnMock(
+    from: Type,
+    to: Type,
+    amountIn: bigint,
+    deltas: [bigint, bigint, bigint, bigint],
+  ): Promise<string | undefined> {
+    const { data, value } = await mockRoute(from, to, amountIn, deltas)
     try {
-      await client.call({ account: USER, to: rp, data, value: params.value })
+      await client.call({ account: USER, to: rp, data, value })
     } catch (e) {
       return String((e as Error).message)
     }
     return undefined
   }
 
-  it('settles and takes the balance deltas a mock vault holds for the RP when they are the swap of the full input', async () => {
+  it('settles the full input into a mock vault and takes the output delta to the leg receiver, in both directions', async () => {
+    /** sends the route through the mock, and reads what the mock recorded */
+    const run = async (
+      from: Type,
+      to: Type,
+      amountIn: bigint,
+      deltas: [bigint, bigint, bigint, bigint],
+    ) => {
+      const { mock, data, value } = await mockRoute(from, to, amountIn, deltas)
+      const hash = await client.sendTransaction({
+        account: USER,
+        to: rp,
+        data,
+        value,
+      })
+      const receipt = await client.waitForTransactionReceipt({ hash })
+      expect(receipt.status).to.equal('success')
+      const read = (functionName: string, args: unknown[] = []) =>
+        client.readContract({
+          address: mock,
+          abi: MockInfinityVault.abi,
+          functionName,
+          args,
+        }) as Promise<any>
+      return {
+        settled: async (currency: Address) => read('settled', [currency]),
+        take: async () =>
+          [
+            await read('takes'),
+            String(await read('takeCurrency')).toLowerCase(),
+            String(await read('takeTo')).toLowerCase(),
+            await read('takeAmount'),
+          ] as const,
+      }
+    }
+    const blanketAddress = BLANKET.address.toLowerCase() as Address
+    // 0G in: the native value settles the input, the BLANKET out goes to the user
     const native = 10n ** 18n
-    expect(
-      await swapOnMock(ZEROG, BLANKET, native, [-native, 5n, -native, 5n]),
-    ).to.equal(undefined)
+    const toBlanket = await run(ZEROG, BLANKET, native, [
+      -native,
+      5n,
+      -native,
+      5n,
+    ])
+    expect(await toBlanket.settled(zeroAddress)).to.equal(native)
+    expect(await toBlanket.settled(blanketAddress)).to.equal(0n)
+    expect(await toBlanket.take()).to.deep.equal([
+      1n,
+      blanketAddress,
+      USER.toLowerCase(),
+      5n,
+    ])
+    // BLANKET in: the tokens sent since the sync settle the input, the native
+    // 0G out goes to the user
     const blanket = 1_000n * 10n ** 18n
-    expect(
-      await swapOnMock(BLANKET, ZEROG, blanket, [5n, -blanket, 5n, -blanket]),
-    ).to.equal(undefined)
+    const toNative = await run(BLANKET, ZEROG, blanket, [
+      5n,
+      -blanket,
+      5n,
+      -blanket,
+    ])
+    expect(await toNative.settled(blanketAddress)).to.equal(blanket)
+    expect(await toNative.settled(zeroAddress)).to.equal(0n)
+    expect(await toNative.take()).to.deep.equal([
+      1n,
+      zeroAddress,
+      USER.toLowerCase(),
+      5n,
+    ])
   })
 
   it('reverts a 0G to BLANKET Infinity CL leg on a partial fill, a positive input delta, a swap delta that is not the balance delta and an output debt', async () => {
