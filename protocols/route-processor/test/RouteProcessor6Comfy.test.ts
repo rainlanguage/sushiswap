@@ -18,9 +18,11 @@ import {
   createPublicClient,
   createTestClient,
   encodeAbiParameters,
+  hexToBigInt,
   keccak256,
   numberToHex,
   publicActions,
+  toHex,
   walletActions,
   zeroAddress,
   zeroHash,
@@ -52,6 +54,18 @@ const USDZ = new Token({
   decimals: 6,
   symbol: 'USDZ',
 })
+/** the ERC-7201 storage location of a namespace id */
+const erc7201 = (id: string) =>
+  hexToBigInt(
+    keccak256(
+      numberToHex(hexToBigInt(keccak256(toHex(id))) - 1n, { size: 32 }),
+    ),
+  ) & ~0xffn
+/** the slot of a balances mapping that is not a plain slot index, by lowercase token address, see setBalance */
+const BALANCE_SLOTS: Record<string, bigint> = {
+  // the balanceOf mapping is the third field of the M0 YieldToOne storage of USDZ
+  [USDZ.address.toLowerCase()]: erc7201('PYUSDX.storage.YieldToOne') + 2n,
+}
 const IAI = new Token({
   chainId: ChainId.ZEROG,
   address: '0xc77fbd3824cc68e612b26114d176879addc29463',
@@ -196,14 +210,22 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
     })
   }
 
-  /** Sets an ERC20 balance, the slot of the balances mapping is found by trying */
+  /**
+   * Sets an ERC20 balance, the slot of the balances mapping is the one of
+   * BALANCE_SLOTS, or it is found by trying the slot indexes
+   */
   async function setBalance(token: Token, account: Address, amount: bigint) {
     const address = token.address as Address
-    for (let i = 0n; i < 100n; i++) {
+    const known = BALANCE_SLOTS[address.toLowerCase()]
+    const mappings = [
+      ...(known === undefined ? [] : [known]),
+      ...Array.from({ length: 100 }, (_, i) => BigInt(i)),
+    ]
+    for (const mapping of mappings) {
       const slot = keccak256(
         encodeAbiParameters(
           [{ type: 'address' }, { type: 'uint256' }],
-          [account, i],
+          [account, mapping],
         ),
       )
       const previous = await client.getStorageAt({ address, slot })
@@ -327,6 +349,12 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
 
   it('swaps 0G to USDZ through the pool without hooks', async () => {
     await swap([POOLS.usdz], ZEROG, USDZ, 10n ** 18n, true)
+  })
+
+  // the pool has one position around the price, it ends at the next
+  // initialized tick above, about 74,715 USDZ away, so a sell stays inside it
+  it('swaps USDZ to 0G through the pool without hooks, the sell side of the quote', async () => {
+    await swap([POOLS.usdz], USDZ, ZEROG, 10n * 10n ** 6n, true)
   })
 
   it('swaps 0G to iAI through the pool whose hook sets a dynamic fee', async () => {

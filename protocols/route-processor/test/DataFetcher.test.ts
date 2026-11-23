@@ -17,6 +17,7 @@ import {
   LiquidityProviders,
   Router,
   UniV3LiquidityProviders,
+  UniV4LiquidityProviders,
 } from 'sushi/router'
 import { UniswapV3BaseProvider } from '../../../packages/sushi/src/router/liquidity-providers/UniswapV3Base.js'
 
@@ -87,11 +88,11 @@ function findRoute(
   liquidityProviders?: LiquidityProviders[],
 ): boolean {
   try {
-    // find the best route map, without the Uniswap V4 pools: the rp4
+    // find the best route map, without the Uniswap V4 style pools: the rp4
     // encoder cannot code them
     const pcMap = new Map(
       [...dataFetcher.getCurrentPoolCodeMap(fromToken, toToken)].filter(
-        ([, pc]) => pc.liquidityProvider !== LiquidityProviders.UniswapV4,
+        ([, pc]) => !UniV4LiquidityProviders.includes(pc.liquidityProvider),
       ),
     )
     const route = Router.findBestRoute(
