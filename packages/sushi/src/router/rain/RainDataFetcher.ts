@@ -97,6 +97,7 @@ import {
 import { WagmiProvider } from '../liquidity-providers/Wagmi.js'
 import { WigoswapProvider } from '../liquidity-providers/Wigoswap.js'
 import { ZebraV2Provider } from '../liquidity-providers/ZebraV2.js'
+import { ZiaV3Provider } from '../liquidity-providers/ZiaV3.js'
 import { PoolCode } from '../pool-codes/PoolCode.js'
 import { PoolFilter, Router } from '../router.js'
 import { UniswapV2BaseProvider } from './UniswapV2Base.js'
@@ -242,6 +243,7 @@ export class RainDataFetcher extends DataFetcher {
       WagmiProvider,
       WigoswapProvider,
       ZebraV2Provider,
+      ZiaV3Provider,
     ]
 
     const _pendings = []

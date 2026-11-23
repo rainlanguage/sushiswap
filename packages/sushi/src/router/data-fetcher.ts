@@ -101,6 +101,7 @@ import {
 import { WagmiProvider } from './liquidity-providers/Wagmi.js'
 import { WigoswapProvider } from './liquidity-providers/Wigoswap.js'
 import { ZebraV2Provider } from './liquidity-providers/ZebraV2.js'
+import { ZiaV3Provider } from './liquidity-providers/ZiaV3.js'
 import type { PoolCode } from './pool-codes/index.js'
 import { promiseTimeout } from './timeout.js'
 
@@ -288,6 +289,7 @@ export class DataFetcher {
       WagmiProvider,
       WigoswapProvider,
       ZebraV2Provider,
+      ZiaV3Provider,
     ].forEach((p) => {
       try {
         const provider = new p(this.chainId, this.web3Client)

@@ -3,7 +3,7 @@ import { expect } from 'chai'
 import { erc20Abi } from 'sushi/abi'
 import { ChainId } from 'sushi/chain'
 import { zeroG } from 'sushi/config'
-import { Native, Token, type Type, WNATIVE } from 'sushi/currency'
+import { Native, Token, type Type, USDC, WNATIVE } from 'sushi/currency'
 import {
   LiquidityProviders,
   type PoolCode,
@@ -39,8 +39,8 @@ import MockInfinityVault from '../artifacts/contracts/mocks/InfinityMocks.sol/Mo
 }
 
 // A fork of 0G at a pinned block, run by anvil, with the comfy.fun
-// PancakeSwap Infinity CL pools. Needs RPC_URL_ZEROG_FORK, an archive node, and anvil on
-// the PATH (or ANVIL_BIN)
+// PancakeSwap Infinity CL pools and a Zia V3 pool. Needs RPC_URL_ZEROG_FORK,
+// an archive node, and anvil on the PATH (or ANVIL_BIN)
 const FORK_BLOCK = 51_060_000
 const ANVIL_PORT = Number(process.env.ANVIL_PORT ?? 18546)
 const USER: Address = '0x5afe5afe5afe5afe5afe5afe5afe5afe5afe5afe'
@@ -78,6 +78,7 @@ const BLANKET = new Token({
   decimals: 18,
   symbol: 'BLANKET',
 })
+const USDCE = USDC[ChainId.ZEROG]
 // the pools the swaps go through, all of them have liquidity at the fork block
 const POOLS = {
   // no hooks, fee 0.05%
@@ -86,6 +87,8 @@ const POOLS = {
   iai: '0x3b188fd684701c53e6546b0c5009d51722512c02a635ccd25b91d593a3b4829a',
   // ComfyLaunchHook, the hook takes its own charge on each swap
   blanket: '0x53f5e244cfe603a42c3a7cf5b6248fcdf3461ce25384356b150cbc7e53c62299',
+  // the Zia V3 W0G and USDC.e pool, a Uniswap V3 pool, fee 0.3%
+  ziaUsdc: '0x23336572435eC92d25eF0dD2D468B2a1aBF7BB4f',
   wrap: W0G.address,
 }
 
@@ -153,11 +156,11 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
     const fetcher = await RainDataFetcher.init(
       ChainId.ZEROG,
       reader as any,
-      [LiquidityProviders.Comfy],
+      [LiquidityProviders.Comfy, LiquidityProviders.ZiaV3],
       BigInt(FORK_BLOCK),
     )
     pools = new Map()
-    for (const token of [USDZ, IAI, BLANKET]) {
+    for (const token of [USDZ, IAI, BLANKET, USDCE]) {
       await fetcher.fetchPoolsForToken(W0G, token, undefined, {
         blockNumber: BigInt(FORK_BLOCK),
       })
@@ -383,6 +386,16 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
     )
   })
 
+  it('swaps BLANKET to USDC.e through the comfy launch hook pool, the wrap and a Zia V3 pool', async () => {
+    await swap(
+      [POOLS.blanket, POOLS.wrap, POOLS.ziaUsdc],
+      BLANKET,
+      USDCE,
+      1_000n * 10n ** 18n,
+      false,
+    )
+  })
+
   /** the vault of the comfy pool codes */
   const vaultOf = (ids: string[]) =>
     ([...pick(ids).values()][0] as PoolCode & { vault: Address }).vault
@@ -517,7 +530,7 @@ describeOnChain('RouteProcessor6 comfy.fun swaps on a 0G fork', () => {
         mock.slice(2),
       ) as Hex
     expect(data).not.to.equal(params.data)
-    return { mock, data, value: params.value }
+    return { mock, data, value: params.value! }
   }
 
   /**
